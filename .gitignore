@@ -1,0 +1,17 @@
+# Spec-driven development: all plans and specs stay local
+specs/
+.worktrees/
+
+# Dependencies and build output
+node_modules/
+dist/
+out/
+
+# Local config and secrets
+.env
+.env.*
+*.local.ts
+
+# OS / editor
+.DS_Store
+Thumbs.db
