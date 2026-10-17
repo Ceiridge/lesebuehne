@@ -119,8 +119,11 @@ export class OpenAICompatibleTTS implements TTSProvider {
   }
 }
 
-/** A local qwentts.cpp `tts-server` (Qwen3-TTS): one request at a time, language by name, fixed seed. */
-export function qwentts(o: { id?: string; baseURL?: string; voices: Array<string | TTSVoice>; seed?: number; fetch?: FetchLike }): OpenAICompatibleTTS {
+/**
+ * A local qwentts.cpp `tts-server` (Qwen3-TTS): language by name, fixed seed. One request at a time
+ * by default; a server started with `--max-batch n` computes n requests together (`concurrency: n`).
+ */
+export function qwentts(o: { id?: string; baseURL?: string; voices: Array<string | TTSVoice>; seed?: number; concurrency?: number; fetch?: FetchLike }): OpenAICompatibleTTS {
   return new OpenAICompatibleTTS({
     id: o.id ?? 'qwentts',
     label: 'Qwen3-TTS (qwentts.cpp, local)',
@@ -129,7 +132,7 @@ export function qwentts(o: { id?: string; baseURL?: string; voices: Array<string
     language: 'name',
     format: 'wav',
     body: { seed: o.seed ?? 42 },
-    concurrency: 1,
+    concurrency: o.concurrency ?? 1,
     timeoutMs: 300_000,
     costHint: 'free',
     ...(o.fetch ? { fetch: o.fetch } : {}),

@@ -1,18 +1,43 @@
-import { aiStatus } from '../../ai/state.ts';
+import { aiDetails, aiStatus, ttsBuffer } from '../../ai/state.ts';
+import { ttsStatus } from '../../ai/tts.ts';
+import type { ReaderSession } from '../../app/session.ts';
+import { settings } from '../../app/store.ts';
+import { isTtsVoice } from '../../engine/audio-port.ts';
 import { t } from '../../i18n/i18n.ts';
 
-/** Quiet top-bar status (B8): heuristic / AI / working / limited. Opens the settings. */
-export function AiIndicator({ onOpen }: { onOpen: () => void }) {
-  const s = aiStatus.value;
-  const state = s.mode === 'heuristic' ? 'heuristic' : s.working > 0 ? 'working' : s.limited ? 'limited' : 'ready';
-  const label = t(`ai.status.${state}`);
-  const title = [label, s.lastProvider ? `${t('ai.provider')}: ${s.lastProvider}` : '', s.limited && s.lastError ? s.lastError.slice(0, 200) : '']
-    .filter(Boolean)
-    .join('\n');
-  return (
-    <button type="button" class={`ai-indicator is-${state} hide-narrow`} title={title} aria-label={label} onClick={onOpen}>
-      <span class="ai-dot" aria-hidden="true" />
-      <span class="ai-label">{state === 'heuristic' ? t('ai.short.heuristic') : t('ai.short.ai')}</span>
-    </button>
-  );
+/** Independent speech/stage status, with the applied selection and direct settings links. */
+export function AiIndicator({ session }: { session: ReaderSession }) {
+  const ai = aiStatus.value;
+  const speech = ttsStatus.value;
+  const progress = session.generation.value;
+  const voice = session.engine.currentVoice;
+  const serverVoice = isTtsVoice(voice?.voiceURI);
+  const speechState = session.pacerMode ? 'paused' : session.engine.silent ? 'off'
+    : !serverVoice ? 'browser' : !ttsBuffer.value ? 'unavailable' : speech.limited ? 'limited'
+    : speech.state === 'buffering' || progress.speech.some(r => r.state === 'working' || r.state === 'queued') ? 'working' : 'ready';
+  const stageState = !session.stageVisible || session.stageCachePaused.value ? 'paused' : !session.ai ? 'heuristic'
+    : ai.limited || progress.stage.some(r => r.state === 'error') ? 'limited'
+    : ai.working > 0 || progress.stage.some(r => r.state === 'working' || r.state === 'queued') ? 'working' : 'ready';
+  const provider = voice?.provider ?? (serverVoice ? voice?.voiceURI.split(':')[1] : undefined);
+  const details = aiDetails.value;
+  const stageProviders = details?.chain.filter(id => id !== 'heuristic').map(id => details.providers.find(p => p.id === id)?.label ?? id).join(' → ');
+  const items = [
+    { kind: 'speech', tab: 'reading', state: speechState, selected: voice?.name ?? t('settings.voiceNone'),
+      detail: [provider ? `${t('ai.provider')}: ${provider}` : '', serverVoice && speech.limited ? speech.lastError : ''].filter(Boolean).join('\n') },
+    { kind: 'stage', tab: 'stage', state: stageState, selected: t(`ai.visualKinds.${settings.value.visualKinds}`),
+      detail: [session.ai ? t(`ai.mode.${ai.mode}`) : t('ai.status.heuristic'), stageProviders ? `${t('ai.chain')}: ${stageProviders}` : '', ai.limited ? ai.lastError : ''].filter(Boolean).join('\n') },
+  ] as const;
+  return <div class="header-generation">
+    {items.map(item => {
+      const label = t(`generation.${item.kind}`);
+      const status = t(`header.generation.${item.state}`);
+      const description = `${label}: ${item.selected} · ${status}`;
+      return <button key={item.kind} type="button" class={`ai-indicator header-generator is-${item.state}`} data-generator={item.kind}
+        title={`${description}${item.detail ? `\n${item.detail}` : ''}`} aria-label={description}
+        onClick={() => { session.settingsTab.value = item.tab; session.panel.value = 'settings'; }}>
+        <span class="header-generator-selection"><strong>{label}</strong><span>{item.selected}</span></span>
+        <span class="header-generator-status"><span class="ai-dot" aria-hidden="true" />{status}</span>
+      </button>;
+    })}
+  </div>;
 }

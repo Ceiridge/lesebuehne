@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { TtsBuffer } from '../../src/ai/tts.ts';
+import { TtsBuffer, ttsStatus } from '../../src/ai/tts.ts';
 import { AudioSpeechPort, RoutingSpeechPort, type AudioLike, type Ticker, type TtsSource } from '../../src/engine/audio-port.ts';
 import type { SpeechPort, UtteranceRequest } from '../../src/engine/speech-port.ts';
 
@@ -127,6 +127,68 @@ describe('M4: audio speech port', () => {
 describe('M4: TTS buffer', () => {
   const urls = { create: () => `blob:${Math.random()}`, revoke: () => undefined };
 
+  test('generation throughput counts overlapping wall time once and excludes cached clips', async () => {
+    let now = 0;
+    const releases: Array<() => void> = [];
+    const buffer = new TtsBuffer(async (text) => {
+      await new Promise<void>((r) => releases.push(r));
+      return { audio: new Blob(['x']), words: [{ start: 0, end: 1, t0: 0, t1: text === 'cache' ? 100 : 4 }], cached: text === 'cache' };
+    }, 300, urls, () => now);
+    buffer.prefetch(['a', 'b', 'c', 'd'].map((text) => ({ text, lang: 'de', voice: 'v' })));
+    await flush();
+    now = 2000;
+    releases.splice(0).forEach((r) => r());
+    await flush();
+    expect(ttsStatus.value.generationSpeed).toBe(8); // 16 seconds of audio / 2 seconds wall time
+    expect(ttsStatus.value.aheadSeconds).toBe(12);
+    expect(ttsStatus.value.contentSpeed).toBeCloseTo((4 / 14) / 16, 8);
+    const hit = buffer.clip('cache', 'de', 'v');
+    await flush();
+    now = 2010;
+    releases.splice(0).forEach((r) => r());
+    await hit;
+    expect(ttsStatus.value.generationSpeed).toBe(8);
+    buffer.dispose();
+    expect(ttsStatus.value.generationSpeed).toBeUndefined();
+    expect(ttsStatus.value.aheadSeconds).toBe(0);
+    expect(ttsStatus.value.contentSpeed).toBeUndefined();
+  });
+
+  test('jumping away and back does not reuse the rejected in-flight promise', async () => {
+    const pending: Array<{ text: string; resolve: (v: { audio: Blob; words: [] }) => void }> = [];
+    const buffer = new TtsBuffer((text) => new Promise((resolve) => pending.push({ text, resolve })), 300, urls);
+    const item = { text: 'first', lang: 'de', voice: 'v' };
+    buffer.prefetch([item]); await flush();
+    buffer.prefetch([]);
+    buffer.prefetch([item]);
+    const clip = buffer.clip(item.text, item.lang, item.voice);
+    await flush();
+    expect(pending).toHaveLength(2);
+    pending[0]!.resolve({ audio: new Blob(['old']), words: [] });
+    pending[1]!.resolve({ audio: new Blob(['new']), words: [] });
+    expect((await clip).url).toStartWith('blob:');
+    expect(buffer.stateOf(item.text, item.lang, item.voice)).toBe('ready');
+    buffer.dispose();
+  });
+
+  test('reordered lookahead serves the nearest clip next, even when old priorities were lower', async () => {
+    const started: string[] = [];
+    const releases: Array<() => void> = [];
+    const buffer = new TtsBuffer(async (text) => {
+      started.push(text);
+      await new Promise<void>((r) => releases.push(r));
+      return { audio: new Blob(['audio']), words: [] };
+    }, 300, urls);
+    buffer.setConcurrency(1);
+    const items = (texts: string[]) => texts.map((text) => ({ text, lang: 'en', voice: 'v' }));
+    buffer.prefetch(items(['current', 'farther', 'nearer'])); await flush();
+    buffer.prefetch(items(['current', 'nearer', 'farther']));
+    releases.shift()!(); await flush();
+    expect(started).toEqual(['current', 'nearer']);
+    buffer.dispose();
+    releases.forEach((r) => r());
+  });
+
   test('prefetch loads the window in order; clip reuses it; a new window cancels the rest', async () => {
     const started: string[] = [];
     const aborted: string[] = [];
@@ -140,13 +202,13 @@ describe('M4: TTS buffer', () => {
         setTimeout(() => resolve({ audio: new Blob(['x']), words: [] }), 10);
       });
     const b = new TtsBuffer(synth, 300, urls);
-    b.prefetch(['a', 'b', 'c', 'd'].map((text) => ({ text, lang: 'de', voice: 'q:v' })));
+    b.prefetch(['a', 'b', 'c', 'd', 'e', 'f'].map((text) => ({ text, lang: 'de', voice: 'q:v' })));
     await flush();
-    expect(started.slice(0, 2)).toEqual(['a', 'b']); // concurrency 2, in order
+    expect(started).toEqual(['a', 'b', 'c', 'd']); // concurrency 4 (batching servers), in order
     b.prefetch(['x', 'y'].map((text) => ({ text, lang: 'de', voice: 'q:v' })));
     await new Promise((r) => setTimeout(r, 40));
-    expect(aborted).toEqual(expect.arrayContaining(['a', 'b']));
-    expect(started).not.toContain('c');
+    expect(aborted).toEqual(expect.arrayContaining(['a', 'b', 'c', 'd']));
+    expect(started).not.toContain('e');
     const before = started.length;
     await b.clip('x', 'de', 'q:v');
     expect(started.length).toBe(before); // already loaded by prefetch

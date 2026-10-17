@@ -32,11 +32,14 @@ const BrowserVoice = z.object({
   model: z.string().catch(''),
   /** Comma-separated voice ids. */
   voices: z.string().catch(''),
-});
+  /** Parallel requests (qwentts: the server's `--max-batch`). */
+  parallel: z.number().int().min(1).max(8).optional().catch(undefined),
+}).transform((voice) => ({ ...voice, parallel: voice.parallel ?? (voice.preset === 'qwentts' ? 1 : 2) }));
 
 export const AiPrefsSchema = z.object({
   /** off: heuristic only; auto: server if present, else BYOK, else heuristic. */
   mode: z.enum(['auto', 'off']).catch('auto'),
+  connection: z.enum(['auto', 'server', 'browser']).catch('auto'),
   /** Optional server URL when the player is not served by it (e.g. `http://127.0.0.1:8787`). */
   serverUrl: z.string().catch(''),
   order: z.array(z.enum(BROWSER_PROVIDERS)).catch([...BROWSER_PROVIDERS]),

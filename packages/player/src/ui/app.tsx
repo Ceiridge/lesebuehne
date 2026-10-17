@@ -31,17 +31,26 @@ export function App({ env }: { env?: AppEnv }) {
     settings.value = appEnv.settings.load();
     const root = document.documentElement;
     const languages = typeof navigator === 'undefined' ? undefined : navigator.languages;
+    let saveTimer: ReturnType<typeof setTimeout> | undefined;
+    const save = () => { clearTimeout(saveTimer); appEnv.settings.save(settings.peek()); };
     const stop = effect(() => {
       const s = settings.value;
       applySettings(s, root, appEnv.prefersDark(), languages);
-      appEnv.settings.save(s);
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(save, 180);
     });
+    const onHidden = () => { if (document.visibilityState === 'hidden') save(); };
+    addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', onHidden);
     void connectAi(appEnv);
     const dark = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
     const onScheme = (): void => applySettings(settings.value, root, appEnv.prefersDark(), languages);
     dark?.addEventListener?.('change', onScheme);
     return () => {
       stop();
+      save();
+      removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', onHidden);
       dark?.removeEventListener?.('change', onScheme);
     };
   }, [appEnv]);

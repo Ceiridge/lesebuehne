@@ -1,5 +1,44 @@
 # Changelog
 
+## Reader settings and playback fixes (2026-10-18)
+
+- Settings groups controls by task: narration, text, stage, AI connection and storage.
+- The header shows separate speech and stage status with the selected voice and visual preference.
+- Timeline and margin tracks show generation progress. Stage colors identify each visual type.
+- Generation-rate indicators compare speech and stage throughput with the reading speed.
+- Stage generation pauses in layouts without a stage. Finished visuals remain available.
+- Stage grids fit SVG diagrams and animation fallbacks into the available width and height.
+- Images use a contained foreground with a blurred background. Subtitles overlay the image.
+- Image zoom stays within 1.04×. Paused stages skip unchanged frames.
+- New animation prompts request one clear relationship with a visible beginning and result.
+- Animation programs allow three text elements. Labels and text use at most three words and 32 characters each.
+- Voice search and expandable sections keep advanced controls available.
+- Provider edits apply together through Save & connect.
+- The AI overview links service status to the relevant setup controls.
+- Connection selection supports automatic detection, server only, or browser only.
+- Playback controls include volume. Generated audio responds during playback.
+- Generated speech reuses fixed chunks after pauses, word jumps and tempo changes.
+- Silent RSVP stops speech generation. User navigation gives the destination word its full display time.
+- RSVP preserves mathematical signs, currency symbols and standalone operators.
+- Resetting visual preferences restarts planning. Silent RSVP hides the inaccurate speech-based remaining time.
+- The speech buffer follows provider concurrency. Existing compatible voices keep their two-request default.
+- Image-only preferences respect missing image providers.
+- Storage clears stage and speech caches separately. Cache maintenance drains pending generation before deleting stored results.
+- New image URLs prevent stale browser images after a cache clear.
+- Settings panels keep keyboard focus inside the dialog and support narrow screens.
+
+## RSVP reading and visual preferences (2026-10-17)
+
+Try it: `bun run dev`. Open a sample and choose **Word by word (RSVP)** in the reading settings.
+
+- RSVP shows one word at a fixed focus point, also as subtitles.
+- Silent RSVP runs at 150–900 words per minute with pauses for punctuation.
+- Long words fit narrow screens without moving the focus point.
+- AI settings offer images only or animations only. Each choice has separate cached plans.
+- Animations fit their sampled bounds inside the canvas.
+- Animation prompts request fewer labels and space around moving parts.
+- QwenTTS supports configurable parallel requests for batched speech generation.
+
 ## M6 – The tool online as a static site (2026-10-17)
 
 Try it: `bun run build && bun run preview`, open the page once, stop the preview and reload: the

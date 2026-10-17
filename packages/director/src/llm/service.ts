@@ -1,7 +1,7 @@
 import { addVariant, selectedValue, type AnimationProgram, type Book, type CacheEntry, type ProviderRegistry, type ResultCache, type StyleBible, type VisualPlan } from '@lesebuehne/core';
 import { animateSection, animationCacheKey } from './animate.ts';
 import { planSection } from '../heuristic.ts';
-import { DEFAULT_BUDGET, planCacheKey, planSectionLLM, prepareBook, styleCacheKey, type Complete, type PlanBudget } from './director.ts';
+import { DEFAULT_BUDGET, planCacheKey, planSectionLLM, preferBudget, prepareBook, styleCacheKey, type Complete, type PlanBudget, type VisualPreference } from './director.ts';
 
 /** Sections with fewer words (outside headings) keep the heuristic plan. */
 export const MIN_WORDS_FOR_LLM = 12;
@@ -43,6 +43,8 @@ export interface AnimateOptions extends VariantOptions {
 export interface PlanOptions extends VariantOptions {
   previous?: VisualPlan;
   budget?: PlanBudget;
+  /** Only pictures or only animations (spec 007 B2). */
+  prefer?: VisualPreference;
 }
 
 export type DirectorEvent =
@@ -62,6 +64,7 @@ export class DirectorService {
       /** Identifies the provider chain in cache keys. */
       chainId: string;
       budget?: PlanBudget;
+      imagesAvailable?: boolean;
       onEvent?: (e: DirectorEvent) => void;
       log?: (line: string) => void;
     },
@@ -157,17 +160,18 @@ export class DirectorService {
       .reduce((n, p) => n + p.sentences.reduce((m, s) => m + s.tokens.filter((t) => t.wordLike).length, 0), 0);
     if (words < MIN_WORDS_FOR_LLM) return { plan: planSection(section, book), cached: true, fallback: false, variants: 0, selected: 0 };
     const styleBible = await this.styleBible(book);
-    const key = planCacheKey(section, book, styleBible, this.o.chainId);
+    const key = planCacheKey(section, book, styleBible, this.o.chainId + (this.o.imagesAvailable === false ? ':no-images' : ''), opts.prefer);
     const entry = await this.variant<VisualPlan>(key, opts.select);
     if (entry && !opts.regenerate) return { plan: selectedValue(entry)!, cached: true, fallback: false, variants: entry.variants.length, selected: entry.selected };
-    const budget = opts.budget ?? this.o.budget ?? DEFAULT_BUDGET;
+    const budget = preferBudget(opts.budget ?? this.o.budget ?? DEFAULT_BUDGET, opts.prefer);
+    const allowedBudget = this.o.imagesAvailable === false ? { ...budget, images: 0 } : budget;
     try {
       const fresh = await this.once(`${key}:${opts.regenerate ? 'r' : ''}`, async () => {
         this.o.onEvent?.({ job: 'plan', state: 'start', key, sectionId });
         const p = await planSectionLLM(
           section,
           book,
-          { ...(styleBible ? { styleBible } : {}), ...(opts.previous ? { previous: opts.previous } : {}), budget },
+          { ...(styleBible ? { styleBible } : {}), ...(opts.previous ? { previous: opts.previous } : {}), ...(opts.prefer ? { prefer: opts.prefer } : {}), budget: allowedBudget },
           this.o.complete('plan'),
           signal,
         );

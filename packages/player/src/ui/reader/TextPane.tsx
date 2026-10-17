@@ -7,6 +7,7 @@ import type { ReaderSession } from '../../app/session.ts';
 import { settings } from '../../app/store.ts';
 import { t } from '../../i18n/i18n.ts';
 import { IconTarget } from '../icons.tsx';
+import { SectionGeneration } from './GenerationProgress.tsx';
 
 /** Index of the chapter that holds the sentence at `entryIndex`. */
 function chapterIndexOf(session: ReaderSession, entryIndex: number): number {
@@ -155,6 +156,7 @@ const ChapterView = memo(function ChapterView({ session, index }: { session: Rea
     <>
       {chapter.sections.map((s) => (
         <div class="section" key={s.id} data-x={s.id}>
+          <SectionGeneration session={session} sectionId={s.id} />
           {s.paragraphs.map((p) => (
             <ParagraphView key={p.id} p={p} session={session} />
           ))}

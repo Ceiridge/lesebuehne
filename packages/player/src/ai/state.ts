@@ -1,7 +1,7 @@
 import { signal } from '@preact/signals';
 import type { VoiceInfo } from '../engine/voices.ts';
 import type { AiBackend, BackendStatus } from './backends.ts';
-import { TtsBuffer } from './tts.ts';
+import { TtsBuffer, ttsStatus } from './tts.ts';
 
 /** Quiet status for the top bar (B8): where plans come from and whether work is running. */
 export interface AiStatus {
@@ -24,6 +24,8 @@ export const aiDetails = signal<BackendStatus | undefined>(undefined);
 export const ttsBuffer = signal<TtsBuffer | undefined>(undefined);
 
 export function setBackend(b: AiBackend | undefined): void {
+  ttsBuffer.value?.dispose();
+  ttsStatus.value = { state: 'idle', ahead: 0, limited: false };
   aiBackend.value = b;
   ttsBuffer.value = b?.tts ? new TtsBuffer((text, lang, voice, s) => b.tts!(text, lang, voice, s)) : undefined;
   aiStatus.value = { mode: b?.mode ?? 'heuristic', working: 0, limited: false };
@@ -49,8 +51,12 @@ export async function refreshDetails(): Promise<void> {
     return;
   }
   try {
-    aiDetails.value = await b.status();
+    const details = await b.status();
+    if (aiBackend.value !== b) return;
+    ttsBuffer.value?.setConcurrency(Math.max(1, ...details.providers.filter((p) => p.kind === 'tts' && p.available).map((p) => p.concurrency ?? 4)));
+    aiDetails.value = details;
   } catch (e) {
+    if (aiBackend.value !== b) return;
     aiStatus.value = { ...aiStatus.value, lastError: e instanceof Error ? e.message : String(e) };
   }
 }

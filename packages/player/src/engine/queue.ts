@@ -13,6 +13,8 @@ export type QueueItem =
       /** Speech offset of the chunk start in the sentence's `speechText`. */
       offset: number;
       text: string;
+      /** Resume inside a canonical generated-audio chunk, without synthesizing a suffix. */
+      startOffset?: number;
       /** First chunk of a sentence (sentence start event). */
       first: boolean;
       /** Last chunk of a sentence (sentence end event). */
@@ -100,9 +102,17 @@ export function sentenceItems(
   mode: FootnoteMode,
   footnotes: FootnoteLookup,
   lang: string,
+  canonical = false,
 ): QueueItem[] {
   const { sentence } = entry;
   const from = tokenSpeechOffset(sentence, fromToken);
+  if (canonical && fromToken > 0) {
+    const items = sentenceItems(entryIndex, entry, 0, mode, footnotes, lang);
+    return items.filter((item) => item.kind === 'footnote' ? item.tokenIndex >= fromToken : item.offset + item.text.length > from)
+      .map((item) => item.kind === 'sentence' && from > item.offset
+        ? { ...item, startOffset: from - item.offset, whole: false }
+        : item);
+  }
   const cuts: Array<{ at: number; footnoteId: string; tokenIndex: number }> = [];
   if (mode === 'inline') {
     for (const ref of sentence.footnoteRefs ?? []) {

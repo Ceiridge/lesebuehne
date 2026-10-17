@@ -24,7 +24,13 @@ export class JobQueue {
   private running = 0;
   private seq = 0;
 
-  constructor(private readonly concurrency = 2) {}
+  constructor(private concurrency = 2) {}
+
+  setConcurrency(value: number): void {
+    if (!Number.isFinite(value) || value < 1) return;
+    this.concurrency = Math.floor(value);
+    this.pump();
+  }
 
   /** Adds a job, or returns the pending promise of the same key (priority raised if lower). */
   enqueue<R>(job: Job<R>): Promise<R> {
@@ -49,6 +55,12 @@ export class JobQueue {
     return this.entries.has(key);
   }
 
+  /** Reorder pending work after the playhead moves, in either direction. */
+  prioritize(key: string, priority: number): void {
+    const entry = this.entries.get(key);
+    if (entry && !entry.running) entry.job = { ...entry.job, priority };
+  }
+
   get size(): number {
     return this.entries.size;
   }
@@ -57,10 +69,8 @@ export class JobQueue {
     const e = this.entries.get(key);
     if (!e) return;
     e.ctrl.abort();
-    if (!e.running) {
-      this.entries.delete(key);
-      e.reject(new DOMException('aborted', 'AbortError'));
-    }
+    this.entries.delete(key);
+    e.reject(new DOMException('aborted', 'AbortError'));
   }
 
   /** Aborts every job whose key is not in `keep`. */
@@ -81,9 +91,38 @@ export class JobQueue {
         .then(next.resolve, next.reject)
         .finally(() => {
           this.running--;
-          this.entries.delete(next.job.key);
+          if (this.entries.get(next.job.key) === next) this.entries.delete(next.job.key);
           this.pump();
         });
+    }
+  }
+}
+
+/** Pause a group for maintenance, abort and drain existing work before changing its storage. */
+export class TaskGroup {
+  private controller = new AbortController();
+  private readonly pending = new Set<Promise<unknown>>();
+  private paused = false;
+
+  run<T>(signal: AbortSignal, task: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    if (this.paused) return Promise.reject(new DOMException('maintenance', 'AbortError'));
+    const joined = AbortSignal.any([signal, this.controller.signal]);
+    const p = Promise.resolve().then(() => { joined.throwIfAborted(); return task(joined); });
+    this.pending.add(p);
+    void p.finally(() => this.pending.delete(p)).catch(() => undefined);
+    return p;
+  }
+
+  async maintain(task: () => Promise<void>): Promise<void> {
+    if (this.paused) throw new Error('maintenance already running');
+    this.paused = true;
+    this.controller.abort();
+    try {
+      await Promise.allSettled([...this.pending]);
+      await task();
+    } finally {
+      this.controller = new AbortController();
+      this.paused = false;
     }
   }
 }

@@ -55,7 +55,10 @@ function speechFor(
   const audio = new AudioSpeechPort({
     source: () => ttsBuffer.value,
     createAudio: () => new Audio() as unknown as AudioLike,
-    onState: (state, error) => (ttsStatus.value = { ...ttsStatus.value, state, ...(error ? { lastError: error } : {}) }),
+    onState: (state, error) => (ttsStatus.value = {
+      ...ttsStatus.value, state,
+      ...(state === 'playing' ? { limited: false, lastError: undefined } : error ? { lastError: error } : {}),
+    }),
   });
   const port = new RoutingSpeechPort(
     web,

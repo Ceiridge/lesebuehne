@@ -3,6 +3,21 @@ import { encodeWav, type Book, type VisualPlan } from '@lesebuehne/core';
 import { IDBFactory } from 'fake-indexeddb';
 import { BrowserBackend, browserMedia, detectBackend, type Http } from '../../src/ai/backends.ts';
 import { IdbMediaStore, IdbResultCache } from '../../src/ai/idb-cache.ts';
+
+test('IndexedDB stage clearing preserves speech bytes and persists across backend recreation', async () => {
+  const idb = new IDBFactory();
+  const cache = new IdbResultCache(idb);
+  const media = new IdbMediaStore(idb);
+  await cache.put('plan-one', { variants: [{ value: 1, providerId: 'local', createdAt: '' }], selected: 0 });
+  await media.put('img-one.png', new Uint8Array([1, 2]));
+  await media.put('tts-one.wav', new Uint8Array([3, 4, 5]));
+  const backend = new BrowserBackend([], cache, { store: media });
+  await backend.clearCache('stage');
+  const reopened = new BrowserBackend([], new IdbResultCache(idb), { store: new IdbMediaStore(idb) });
+  expect(await reopened.cacheStats()).toEqual({ stage: { entries: 0, bytes: 0 }, speech: { entries: 1, bytes: 3 } });
+  await reopened.clearCache('speech');
+  expect((await reopened.cacheStats()).speech).toEqual({ entries: 0, bytes: 0 });
+});
 import { AiPrefsSchema } from '../../src/ai/prefs.ts';
 import { canUseServiceWorker } from '../../src/app/pwa.ts';
 import { showStaticHint } from '../../src/app/static-hint.ts';

@@ -4,6 +4,7 @@ import { EXAMPLE_PROGRAM } from '@lesebuehne/director';
 import { render } from 'preact';
 import { withDom } from '../../../tests/support/with-dom.ts';
 import { READY_TIMEOUT_MS, SANDBOX_CSP, SandboxHost, sandboxDocument, TICK_TIMEOUT_MS, Visual, visualState, type AnimationInit, type SandboxStatus } from '../src/index.ts';
+import { fitTransform, LIBRARY_SOURCE, MAX_TEXT_CHARS } from '../src/animation/library.ts';
 
 const init: AnimationInit = {
   cues: [1, 2],
@@ -12,6 +13,61 @@ const init: AnimationInit = {
   palette: { background: '#fff', ink: '#000', accent: '#a00', accent2: '#00a', muted: '#888' },
   motion: 'full',
 };
+
+describe('M7: animation bounds and text', () => {
+  const dom = withDom();
+
+  test('overflowing scenes fit inside the margin, including very large coordinates', () => {
+    expect(fitTransform(null, 1600, 900, 24)).toBeNull();
+    expect(fitTransform({ x: 40, y: 40, width: 1520, height: 820 }, 1600, 900, 24)).toBeNull();
+    for (const box of [
+      { x: 100, y: 700, width: 1200, height: 400 },
+      { x: -200, y: -100, width: 2400, height: 1600 },
+      { x: 0, y: 0, width: 1e7, height: 1e7 },
+    ]) {
+      const f = fitTransform(box, 1600, 900, 24)!;
+      expect(f.s).toBeGreaterThan(0);
+      expect(f.s).toBeLessThanOrEqual(1);
+      expect(box.x * f.s + f.tx).toBeGreaterThanOrEqual(24 - 1e-8);
+      expect(box.y * f.s + f.ty).toBeGreaterThanOrEqual(24 - 1e-8);
+      expect((box.x + box.width) * f.s + f.tx).toBeLessThanOrEqual(1576 + 1e-8);
+      expect((box.y + box.height) * f.s + f.ty).toBeLessThanOrEqual(876 + 1e-8);
+    }
+  });
+
+  test('sandbox restores time zero if measurement fails and limits updated text too', () => {
+    dom.document.body.innerHTML = '<svg id="scene"><g id="lb-fit"></g></svg>';
+    const root = dom.document.getElementById('lb-fit')!;
+    let measures = 0;
+    Object.assign(root, { getBBox() { if (++measures > 1) throw new Error('measurement failed'); return { x: 0, y: 0, width: 10, height: 10 }; } });
+    new Function('window', 'document', 'parent', LIBRARY_SOURCE)(dom.window, dom.document, dom.window);
+    new Function('window', `window.__lbProgram = function(lb) {
+      var text = lb.text('short', {x: 50, y: 50});
+      return function(t) { text.set({text: 'x'.repeat(100), y: t}); };
+    };`)(dom.window);
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', { source: dom.window, data: { type: 'init', ...init } }));
+    const text = root.querySelector('text')!;
+    expect(text.getAttribute('y')).toBe('0');
+    expect(text.textContent).toHaveLength(MAX_TEXT_CHARS);
+    expect(text.textContent?.endsWith('…')).toBe(true);
+  });
+
+  test('label boxes obey the text limits on creation and update; crowded scenes fail for repair', () => {
+    dom.document.body.innerHTML = '<svg id="scene"><g id="lb-fit"></g></svg>';
+    new Function('window', 'document', 'parent', LIBRARY_SOURCE)(dom.window, dom.document, dom.window);
+    const lb = (dom.window as unknown as { __lb: { label(text: string): { set(attrs: { text: string }): void }; text(text: string): void } }).__lb;
+    const label = lb.label('One two three four five six seven');
+    const root = dom.document.getElementById('lb-fit')!;
+    expect([...root.querySelectorAll('tspan')].map((line) => line.textContent).join(' ')).toBe('One two three…');
+    label.set({ text: 'New short label with far too many additional words' });
+    expect(root.querySelectorAll('rect')).toHaveLength(1);
+    expect(root.querySelector('text')!.textContent).toBe('New short label…');
+    lb.text('Second');
+    lb.label('Third');
+    expect(() => lb.text('Fourth')).toThrow('at most three short labels');
+    expect(root.querySelectorAll('text')).toHaveLength(3);
+  });
+});
 
 describe('M3: static validation of animation programs', () => {
   test('accepts the documented example', () => {

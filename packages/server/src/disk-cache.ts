@@ -1,5 +1,5 @@
-import type { CacheEntry, ResultCache } from '@lesebuehne/core';
-import { mkdir, rename, rm } from 'node:fs/promises';
+import type { CacheEntry, CacheUsage, ResultCache } from '@lesebuehne/core';
+import { mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 const SAFE_KEY = /^[a-z0-9-]{1,80}$/u;
@@ -34,4 +34,15 @@ export class DiskCache implements ResultCache {
   async delete(key: string): Promise<void> {
     await rm(this.path(key), { force: true });
   }
+
+  private async files(): Promise<string[]> {
+    const files = await readdir(this.dir, { withFileTypes: true }).catch((e: NodeJS.ErrnoException) => { if (e.code === 'ENOENT') return []; throw e; });
+    return files.filter((f) => f.isFile() && /^[a-z0-9-]{1,80}\.json$/u.test(f.name)).map((f) => join(this.dir, f.name));
+  }
+  async stats(): Promise<CacheUsage> {
+    const files = await this.files();
+    const sizes = await Promise.all(files.map((f) => stat(f).then((s) => s.size).catch(() => 0)));
+    return { entries: files.length, bytes: sizes.reduce((a, b) => a + b, 0) };
+  }
+  async clear(): Promise<void> { await Promise.all((await this.files()).map((f) => rm(f, { force: true }))); }
 }

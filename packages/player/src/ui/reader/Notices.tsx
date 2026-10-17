@@ -46,6 +46,7 @@ export function Notices({ session }: { session: ReaderSession }) {
               type="button"
               class="link-btn"
               onClick={() => {
+                session.settingsTab.value = 'reading';
                 session.panel.value = 'settings';
                 queueMicrotask(() => document.getElementById('settings-voice')?.scrollIntoView?.({ block: 'start' }));
               }}

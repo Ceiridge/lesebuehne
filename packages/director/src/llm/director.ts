@@ -34,6 +34,7 @@ export interface PlanBudget {
 export const DEFAULT_BUDGET: Readonly<PlanBudget> = { images: 2, animations: 3 };
 
 export interface PlanContext {
+  prefer?: VisualPreference;
   styleBible?: StyleBible;
   /** Plan of the previous section, for continuity. */
   previous?: VisualPlan;
@@ -195,6 +196,8 @@ export function planUserPrompt(section: Section, book: Book, ctx: PlanContext): 
     sb?.glossary.length ? `Glossary (label · glyph · colour): ${sb.glossary.map((c) => `${c.label} · ${c.glyph} · ${c.color}`).join('; ')}` : '',
     ctx.previous ? `Previous section: mode ${ctx.previous.mode}${ctx.previous.keyTerms.length ? `, terms ${ctx.previous.keyTerms.join(', ')}` : ''}.` : '',
     `Budget left in this chapter: ${budget.images} images, ${budget.animations} animations.`,
+    ctx.prefer === 'images' && budget.images > 0 ? 'The reader selected pictures: use mode "image" for this section. Illustrate its central idea with a concrete scene or explanatory visual metaphor, following the Style Bible.' : '',
+    ctx.prefer === 'animations' && budget.animations > 0 ? 'The reader prefers animations: favour mode "animation" when motion helps explain this section.' : '',
     'Section (one sentence per line, alias in brackets; the aliases are not part of the text):',
     dataBlock(text),
   ];
@@ -398,7 +401,11 @@ export async function planSectionLLM(section: Section, book: Book, ctx: PlanCont
     user: planUserPrompt(section, book, ctx),
     schema: LlmPlanSchema,
     schemaName: 'visual_plan',
-    validate: (plan) => fatalPlanProblems(section, plan),
+    validate: (plan) => [
+      ...fatalPlanProblems(section, plan),
+      ...(ctx.prefer === 'images' && (ctx.budget ?? DEFAULT_BUDGET).images > 0 && plan.mode !== 'image'
+        ? ['The reader selected pictures and image budget remains: use mode "image" with an illustration prompt.'] : []),
+    ],
     signal,
   });
   return toVisualPlan(section, book, r.value, ctx, { providerId: r.providerId, ...(r.model ? { model: r.model } : {}) });
@@ -430,8 +437,18 @@ export function budgetAfter(plans: Iterable<VisualPlan>, start: PlanBudget = DEF
   return { images: Math.max(0, b.images), animations: Math.max(0, b.animations) };
 }
 
-/** Cache key of an LLM plan: section content, prompt, style and the chain that may answer. */
-export function planCacheKey(section: Section, book: Book, styleBible: StyleBible | undefined, chain: string): string {
+/** The reader's visual preference (spec 007 B2): only pictures or only animations. */
+export type VisualPreference = 'images' | 'animations';
+
+/** Moves the other kind's budget to the preferred one (no preference: unchanged). */
+export function preferBudget(budget: PlanBudget, prefer: VisualPreference | undefined): PlanBudget {
+  if (prefer === 'images') return { images: budget.images + budget.animations, animations: 0 };
+  if (prefer === 'animations') return { images: 0, animations: budget.animations + budget.images };
+  return budget;
+}
+
+/** Cache key of an LLM plan: section content, prompt, style, chain and visual preference. */
+export function planCacheKey(section: Section, book: Book, styleBible: StyleBible | undefined, chain: string, prefer?: VisualPreference): string {
   return cacheKey('plan', {
     book: book.id,
     section: section.id,
@@ -439,5 +456,7 @@ export function planCacheKey(section: Section, book: Book, styleBible: StyleBibl
     prompt: PLAN_PROMPT_VERSION,
     style: styleBibleVersion(styleBible),
     chain,
+    // Only with a preference, so caches without one stay valid.
+    ...(prefer ? { prefer } : {}),
   });
 }

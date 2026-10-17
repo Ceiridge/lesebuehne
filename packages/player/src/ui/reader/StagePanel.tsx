@@ -72,8 +72,15 @@ export function StagePanel({ session, subtitles = false }: { session: ReaderSess
 
   useEffect(() => {
     let raf = 0;
+    let inputs: unknown[] = [];
     const loop = (): void => {
-      snapshot.value = stageStep(session, session.env.timers.now());
+      const next = stageStep(session, session.env.timers.now());
+      const previous = snapshot.peek();
+      const nextInputs = [session.plans.peek(), session.images.peek(), session.animations.peek(), session.styleBible.peek(), settings.peek(), session.env.prefersDark()];
+      if (nextInputs.some((value, i) => value !== inputs[i]) || next.tau !== previous.tau || next.frame.current !== previous.frame.current || next.frame.previous !== previous.frame.previous || next.frame.fade !== previous.frame.fade) {
+        snapshot.value = next;
+        inputs = nextInputs;
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);

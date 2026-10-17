@@ -22,7 +22,8 @@ export interface AudioLike {
   src: string;
   playbackRate: number;
   preservesPitch: boolean;
-  readonly currentTime: number;
+  currentTime: number;
+  volume?: number;
   play(): Promise<void>;
   pause(): void;
   onplaying: (() => void) | null;
@@ -53,6 +54,7 @@ export class AudioSpeechPort implements SpeechPort {
   private generation = 0;
   private audio: AudioLike | undefined;
   private stopPolling: (() => void) | undefined;
+  private volume = 1;
 
   constructor(
     private readonly o: {
@@ -65,6 +67,7 @@ export class AudioSpeechPort implements SpeechPort {
 
   speak(r: UtteranceRequest): void {
     this.stop();
+    this.volume = r.volume ?? this.volume;
     const g = ++this.generation;
     const live = (): boolean => g === this.generation;
     const source = this.o.source();
@@ -82,7 +85,12 @@ export class AudioSpeechPort implements SpeechPort {
         audio.preservesPitch = true;
         audio.src = clip.url;
         audio.playbackRate = r.rate;
-        let next = 0;
+        audio.volume = this.volume;
+        const offset = r.startOffset ?? 0;
+        // Timings use original text offsets. Never emit words before the requested position.
+        let next = offset ? clip.words.findIndex((w) => w.end > offset) : 0;
+        if (next < 0) next = clip.words.length;
+        if (offset) audio.currentTime = clip.words[next]?.t0 ?? clip.words.at(-1)?.t1 ?? 0;
         let started = false;
         const emit = (until: number): void => {
           while (next < clip.words.length && clip.words[next]!.t0 <= until) r.onBoundary(clip.words[next++]!.start, 'word');
@@ -142,6 +150,11 @@ export class AudioSpeechPort implements SpeechPort {
   setRate(rate: number): void {
     if (this.audio) this.audio.playbackRate = rate;
   }
+
+  setVolume(volume: number): void {
+    this.volume = volume;
+    if (this.audio) this.audio.volume = volume;
+  }
 }
 
 /**
@@ -170,7 +183,8 @@ export class RoutingSpeechPort implements SpeechPort {
         const voiceURI = this.fallbackVoice(r.lang);
         if (!this.web || !voiceURI) return r.onError(error);
         this.onFallback(error);
-        this.web.speak({ ...r, voiceURI });
+        const offset = r.startOffset ?? 0;
+        this.web.speak({ ...r, voiceURI, text: r.text.slice(offset), onBoundary: (index, name) => r.onBoundary(index + offset, name) });
       },
     });
   }
@@ -178,5 +192,10 @@ export class RoutingSpeechPort implements SpeechPort {
   cancel(): void {
     this.audio.cancel();
     this.web?.cancel();
+  }
+
+  setVolume(volume: number): void {
+    this.audio.setVolume(volume);
+    this.web?.setVolume?.(volume);
   }
 }

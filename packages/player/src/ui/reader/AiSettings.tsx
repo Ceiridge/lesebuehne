@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { aiConnecting, aiPrefs, connectAi, updateAiPrefs } from '../../ai/connect.ts';
+import { aiConnecting, aiDraft, aiPrefs, connectAi, updateAiPrefs } from '../../ai/connect.ts';
 import { BROWSER_IMAGE_PROVIDERS, BROWSER_PROVIDERS, BROWSER_VOICE_PRESETS, maskKey, type AiPrefs, type BrowserProviderId, type ByokConfig } from '../../ai/prefs.ts';
 import { aiBackend, aiDetails, aiStatus, refreshDetails } from '../../ai/state.ts';
 import { useEnv } from '../../app/env.ts';
@@ -94,10 +94,12 @@ function ByokFields({ id, config, onChange }: { id: BrowserProviderId; config: B
 /** Settings → AI director (B8): status, chain, usage, sign-in, BYOK. */
 export function AiSettings({ session }: { session?: ReaderSession }) {
   const env = useEnv();
-  const prefs = aiPrefs.value;
+  const prefs = aiDraft.value ?? aiPrefs.value;
   const details = aiDetails.value;
   const backend = aiBackend.value;
   const status = aiStatus.value;
+  const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     void refreshDetails();
@@ -105,9 +107,22 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
 
   if (!env.http || !prefs) return null;
 
-  const change = (patch: (p: AiPrefs) => AiPrefs, reconnect = true): void => {
-    updateAiPrefs(env, patch);
-    if (reconnect) void connectAi(env);
+  const change = (patch: (p: AiPrefs) => AiPrefs): void => {
+    aiDraft.value = patch(aiDraft.value ?? prefs);
+    setSaved(false);
+  };
+  const apply = async () => {
+    setSaveError('');
+    if (!aiDraft.value && backend) {
+      await refreshDetails();
+      await session?.refreshVoices();
+      setSaved(true);
+      return;
+    }
+    updateAiPrefs(env, () => aiDraft.value ?? prefs);
+    aiDraft.value = undefined;
+    try { await connectAi(env); setSaved(true); }
+    catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); }
   };
   const move = (id: BrowserProviderId, delta: number): void =>
     change((p) => {
@@ -121,10 +136,11 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
 
   const where = backend ? t(`ai.mode.${backend.mode}` as MessageKey) : t('ai.mode.heuristic');
   return (
-    <>
-      <h3 class="settings-group" id="settings-ai">
-        {t('ai.title')}
-      </h3>
+    <div class="ai-settings">
+      <header class="settings-intro" id="settings-ai"><h3>{t(session ? 'settings.tab.ai' : 'ai.title')}</h3><p>{t('ai.overviewHint')}</p></header>
+      <div class="connection-status" role="status"><span class={backend ? 'connection-dot is-ok' : 'connection-dot'} /><div><strong>{aiConnecting.value ? t('ai.connecting') : where}</strong><span>{t(backend?.mode === 'server' ? 'ai.activeServerHint' : backend?.mode === 'browser' ? 'ai.activeBrowserHint' : 'ai.activeOfflineHint')}</span></div></div>
+      <Capabilities />
+      <details class="settings-fold"><summary>{t('ai.connectionSetup')}</summary><div class="fold-body">
       <div class="field">
         <span class="field-label" id="ai-mode-label">
           {t('ai.enabled')}
@@ -141,8 +157,22 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
           {status.lastProvider ? ` · ${t('ai.provider')}: ${status.lastProvider}` : ''}
         </p>
       </div>
+      <div class="field">
+        <label class="field-label" for="ai-connection">{t('ai.connection')}</label>
+        <select id="ai-connection" value={prefs.connection} onChange={(e) => change((p) => ({ ...p, connection: e.currentTarget.value as AiPrefs['connection'] }))}>
+          {(['auto', 'server', 'browser'] as const).map((v) => <option value={v} key={v}>{t(`ai.connection.${v}`)}</option>)}
+        </select>
+        <p class="field-hint">{t('ai.connectionHint')}</p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="ai-server-url">{t('ai.serverUrl')}</label>
+        <input id="ai-server-url" type="url" spellcheck={false} placeholder="http://127.0.0.1:8787" value={prefs.serverUrl} onChange={(e) => change((p) => ({ ...p, serverUrl: e.currentTarget.value.trim() }))} />
+        <p class="field-hint">{t('ai.serverHint')}</p>
+      </div>
+      </div></details>
 
       {details ? (
+        <details class="settings-fold" id="provider-diagnostics"><summary>{t('ai.providerDetails')}<span class="fold-meta">{details.providers.filter((p) => p.available).length} / {details.providers.length}</span></summary><div class="fold-body">
         <div class="field">
           <span class="field-label">{t('ai.chain')}</span>
           <ul class="provider-list">
@@ -189,43 +219,14 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
             </li>
           </ul>
         </div>
+        {status.lastError ? <p class="settings-error">{status.lastError}</p> : null}
+        <button class="btn" type="button" onClick={() => void refreshDetails()}>{t('ai.checkConnection')}</button>
+        </div></details>
       ) : null}
 
-      {session?.ai ? (
-        <div class="field">
-          <button
-            type="button"
-            class="btn btn-ghost btn-block"
-            onClick={() => {
-              toast(t('ai.regeneratingStyle'), 'info', 2400);
-              void session.ai?.regenerateStyle();
-            }}
-          >
-            {t('ai.regenerateStyle')}
-          </button>
-          {session.styleBible.value ? (
-            <p class="field-hint">
-              {t('ai.styleSummary', { mood: session.styleBible.value.mood, concepts: session.styleBible.value.glossary.length })}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div class="field">
-        <label class="field-label" for="ai-server-url">
-          {t('ai.serverUrl')}
-        </label>
-        <input
-          id="ai-server-url"
-          type="url"
-          spellcheck={false}
-          placeholder="http://127.0.0.1:8787"
-          value={prefs.serverUrl}
-          onChange={(e) => change((p) => ({ ...p, serverUrl: e.currentTarget.value.trim() }))}
-        />
-        <p class="field-hint">{t('ai.serverHint')}</p>
-      </div>
-
+      <details class="settings-fold" id="browser-provider-setup"><summary>{t('ai.browserSetup')}</summary><div class="fold-body">
+      {backend?.mode === 'server' && prefs.connection !== 'browser' ? <p class="field-hint">{t('ai.browserInactive')}</p> : null}
+      <details class="settings-fold" id="browser-text-setup"><summary>{t('ai.textProviders')}<span class="fold-meta">{prefs.order.filter((id) => prefs.byok[id].enabled).length}</span></summary><div class="fold-body">
       <div class="field">
         <span class="field-label">{t('ai.byok')}</span>
         <p class="field-hint">{t('ai.byokHint')}</p>
@@ -248,13 +249,15 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
                     </button>
                   </span>
                 </div>
-                {c.enabled ? <ByokFields id={id} config={c} onChange={(next) => change((p) => ({ ...p, byok: { ...p.byok, [id]: next } }))} /> : null}
+                {c.enabled ? <details class="provider-config"><summary>{t('ai.configure')}</summary><ByokFields id={id} config={c} onChange={(next) => change((p) => ({ ...p, byok: { ...p.byok, [id]: next } }))} /></details> : null}
               </li>
             );
           })}
         </ol>
       </div>
+      </div></details>
 
+      <details class="settings-fold" id="browser-images-setup"><summary>{t('ai.images')}<span class="fold-meta">{t(`ai.images.${prefs.images.provider}` as MessageKey)}</span></summary><div class="fold-body">
       <div class="field">
         <span class="field-label" id="ai-images-label">
           {t('ai.images')}
@@ -277,7 +280,9 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
         ) : null}
         <p class="field-hint">{prefs.images.provider === 'openrouter' ? t('ai.imagesHintOpenRouter') : t('ai.imagesHint')}</p>
       </div>
+      </div></details>
 
+      <details class="settings-fold" id="browser-voice-setup"><summary>{t('ai.voice')}<span class="fold-meta">{prefs.voice.enabled ? t(`ai.voice.${prefs.voice.preset}` as MessageKey) : t('ai.enabled.off')}</span></summary><div class="fold-body">
       <div class="field">
         <label class="check">
           <input type="checkbox" checked={prefs.voice.enabled} onChange={(e) => change((p) => ({ ...p, voice: { ...p.voice, enabled: e.currentTarget.checked } }))} />
@@ -306,27 +311,49 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
             {prefs.voice.preset !== 'qwentts' ? (
               <TextField id="ai-voice-model" label={t('ai.model')} value={prefs.voice.model} placeholder={prefs.voice.preset === 'openai' ? 'gpt-4o-mini-tts' : ''} onChange={(model) => change((p) => ({ ...p, voice: { ...p.voice, model } }))} />
             ) : null}
+            {prefs.voice.preset !== 'openai' ? (
+              <TextField
+                id="ai-voice-parallel"
+                type="number"
+                label={t('ai.voiceParallel')}
+                value={String(prefs.voice.parallel)}
+                onChange={(n) => change((p) => ({ ...p, voice: { ...p.voice, parallel: Math.min(8, Math.max(1, Math.round(Number(n)) || 1)) } }))}
+              />
+            ) : null}
             <TextField id="ai-voice-voices" label={t('ai.voices')} value={prefs.voice.voices} placeholder={prefs.voice.preset === 'openai' ? 'alloy, nova' : 'serena'} onChange={(voices) => change((p) => ({ ...p, voice: { ...p.voice, voices } }))} />
           </div>
         ) : null}
         <p class="field-hint">{t('ai.voiceHint')}</p>
       </div>
-
-      <Capabilities />
-    </>
+      </div></details>
+      </div></details>
+      <div class="provider-savebar">
+        <p>{aiDraft.value ? t('ai.unsaved') : saved ? t('ai.saved') : t('ai.saveHint')}</p>
+        <div><button type="button" class="btn btn-primary" disabled={aiConnecting.value} onClick={() => void apply()}>{aiConnecting.value ? t('ai.connecting') : aiDraft.value ? t('ai.saveConnect') : t('ai.checkConnection')}</button>
+        {aiDraft.value ? <button type="button" class="btn btn-ghost" onClick={() => (aiDraft.value = undefined)}>{t('ai.discard')}</button> : null}</div>
+      </div>
+      {saveError ? <p class="settings-error" role="alert">{saveError}</p> : null}
+    </div>
   );
 }
 
 /** What works here and what needs the local server (spec 006 B3). */
 function Capabilities() {
   const b = aiBackend.value;
-  const server = b?.mode === 'server';
+  const details = aiDetails.value;
+  const available = (kind: string) => !!details?.providers.some((p) => p.kind === kind && p.available);
+  const open = (label: MessageKey) => {
+    const id = b?.mode === 'server' ? 'provider-diagnostics' : label === 'ai.cap.plans' ? 'browser-text-setup' : label === 'ai.cap.images' ? 'browser-images-setup' : 'browser-voice-setup';
+    const target = document.getElementById(id);
+    for (let parent = target; parent; parent = parent.parentElement) if (parent instanceof HTMLDetailsElement) parent.open = true;
+    target?.scrollIntoView({ block: 'nearest' });
+    target?.querySelector('summary')?.focus();
+  };
   const rows: Array<[MessageKey, boolean, MessageKey]> = [
     ['ai.cap.reading', true, 'ai.cap.always'],
-    ['ai.cap.plans', !!b && b.plans !== false, 'ai.cap.needsKey'],
-    ['ai.cap.images', !!b?.image, 'ai.cap.needsImages'],
-    ['ai.cap.voices', !!b?.tts, 'ai.cap.needsVoice'],
-    ['ai.cap.subscription', server, 'ai.cap.needsServer'],
+    ['ai.cap.plans', !!b && b.plans !== false && available('llm'), 'ai.cap.needsKey'],
+    ['ai.cap.images', !!b?.image && available('image'), 'ai.cap.needsImages'],
+    ['ai.cap.voices', !!b?.tts && available('tts'), 'ai.cap.needsVoice'],
   ];
   return (
     <div class="field">
@@ -336,7 +363,7 @@ function Capabilities() {
           <li key={label} class={ok ? 'is-ok' : 'is-off'}>
             <span class="provider-dot" aria-hidden="true" />
             <span class="provider-text">
-              <span class="provider-name">{t(label)}</span>
+              {label === 'ai.cap.reading' ? <span class="provider-name">{t(label)}</span> : <button type="button" class="capability-link" onClick={() => open(label)}>{t(label)} <span aria-hidden="true">→</span></button>}
               <span class="provider-meta">{ok ? t(hint === 'ai.cap.always' ? hint : 'ai.available') : t(hint)}</span>
             </span>
           </li>

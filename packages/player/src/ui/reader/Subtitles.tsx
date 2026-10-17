@@ -1,6 +1,9 @@
 import type { Sentence } from '@lesebuehne/core';
 import type { ComponentChildren } from 'preact';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import type { ReaderSession } from '../../app/session.ts';
+import { settings } from '../../app/store.ts';
+import { rsvpWord } from '../../engine/rsvp.ts';
 
 /** Longest subtitle line block (characters) before the sentence is split into cues. */
 export const SUBTITLE_CHARS = 96;
@@ -69,8 +72,64 @@ export function KaraokeText({
   return <>{out}</>;
 }
 
-/** Subtitles at the bottom of the stage: the current cue of the current sentence. */
+/**
+ * RSVP (spec 007 B1): the current word alone at a fixed place, its ORP letter in red on the
+ * centre axis, so the eyes stay still. `view` fills the main area, `subtitle` sits on the stage.
+ */
+export function RsvpView({ session, variant }: { session: ReaderSession; variant: 'view' | 'subtitle' }) {
+  const wordRef = useRef<HTMLParagraphElement>(null);
+  const p = session.engine.position.value;
+  const entry = session.timeline.entries[p.entryIndex];
+  const w = entry ? rsvpWord(entry.sentence, p.tokenIndex) : undefined;
+  const words = entry ? entry.sentence.tokens.filter((t) => t.wordLike).length : 0;
+  const done = entry && w ? entry.sentence.tokens.slice(0, w.tokenIndex + 1).filter((t) => t.wordLike).length : 0;
+  useLayoutEffect(() => {
+    const word = wordRef.current;
+    const frame = word?.parentElement;
+    if (!word || !frame) return;
+    let disposed = false;
+    const fit = () => {
+      if (disposed) return;
+      word.style.fontSize = '';
+      const [before, pivot, after] = [...word.children] as HTMLElement[];
+      const needed = 2 * Math.max(before!.scrollWidth, after!.scrollWidth) + pivot!.getBoundingClientRect().width;
+      if (needed > word.clientWidth && word.clientWidth > 0) {
+        word.style.fontSize = `${parseFloat(getComputedStyle(frame).fontSize) * word.clientWidth / (needed + 2)}px`;
+      }
+    };
+    fit();
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(fit);
+    observer?.observe(frame);
+    void document.fonts?.ready.then(fit);
+    return () => { disposed = true; observer?.disconnect(); };
+  }, [w?.before, w?.pivot, w?.after, variant, settings.value.font]);
+  return (
+    <div class={`rsvp rsvp-${variant}`} lang={session.book.language} aria-live="off">
+      <div class="rsvp-frame" onClick={variant === 'view' ? () => session.togglePlay() : undefined}>
+        <p ref={wordRef} class="rsvp-word" aria-label={w ? w.before + w.pivot + w.after : ''}>
+          <span class="rsvp-before">{w?.before}</span>
+          <span class="rsvp-pivot">{w?.pivot}</span>
+          <span class="rsvp-after">{w?.after}</span>
+        </p>
+      </div>
+      {variant === 'view' && words > 0 ? (
+        <div class="rsvp-progress" aria-hidden="true">
+          <span style={{ width: `${Math.round((done / words) * 100)}%` }} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Subtitles at the bottom of the stage: the current cue of the current sentence (or one RSVP word). */
 export function Subtitles({ session }: { session: ReaderSession }) {
+  if (settings.value.subtitleStyle === 'word') {
+    return (
+      <div class="subtitles is-word">
+        <RsvpView session={session} variant="subtitle" />
+      </div>
+    );
+  }
   const p = session.engine.position.value;
   const entry = session.timeline.entries[p.entryIndex];
   if (!entry) return null;

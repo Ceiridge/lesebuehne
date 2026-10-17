@@ -1,4 +1,4 @@
-import { BookSchema, contentHash, VisualPlanSchema, type Book, type ResultCache } from '@lesebuehne/core';
+import { BookSchema, contentHash, TaskGroup, VisualPlanSchema, type Book, type ResultCache } from '@lesebuehne/core';
 import { DirectorService, PLAN_PROMPT_VERSION, registryComplete, STYLE_PROMPT_VERSION } from '@lesebuehne/director';
 import { startPlanLogin } from '@lesebuehne/llm-chatgpt-plan';
 import { CodexAuthLLM, startCodexLogin } from '@lesebuehne/llm-codex-auth';
@@ -9,6 +9,7 @@ import type { ServerConfig } from './config.ts';
 import type { ProviderSetup } from './providers.ts';
 import { TtsService } from './tts.ts';
 import { ImageService } from './images.ts';
+import { DiskStore } from './disk-store.ts';
 
 export const SERVER_VERSION = '0.2.0';
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -37,6 +38,7 @@ const PlanBody = z.object({
   sectionId: z.string().min(1),
   previous: VisualPlanSchema.optional(),
   budget: z.object({ images: z.number().int().min(0), animations: z.number().int().min(0) }).optional(),
+  prefer: z.enum(['images', 'animations']).optional(),
   regenerate: z.boolean().optional(),
   select: z.number().int().min(0).optional(),
 });
@@ -61,6 +63,34 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
   const logins = new Map<string, { cancel(): void }>();
   const booksDir = join(ctx.dataDir, 'books');
   const log = ctx.log ?? (() => {});
+  const tasks = { stage: new TaskGroup(), speech: new TaskGroup() };
+  const imageStore = new DiskStore(join(ctx.dataDir, 'cache', 'images'));
+  const speechStore = new DiskStore(join(ctx.dataDir, 'cache', 'tts'));
+  const run = (scope: 'stage' | 'speech', req: Request, fn: (req: Request) => Promise<Response>): Promise<Response> =>
+    tasks[scope].run(req.signal, (signal) => fn(new Request(req, { signal }))).catch((e: unknown) => fail(503, 'unavailable', e instanceof Error ? e.message : String(e)));
+
+  async function cacheStats(): Promise<Response> {
+    const [results, images, speech] = await Promise.all([ctx.cache.stats?.(), imageStore.stats('img-'), speechStore.stats('tts-')]);
+    return json({ stage: { entries: (results?.entries ?? 0) + images.entries, bytes: (results?.bytes ?? 0) + images.bytes }, speech });
+  }
+
+  async function clearCache(req: Request): Promise<Response> {
+    const body = z.object({ scope: z.enum(['stage', 'speech']) }).safeParse(await req.json().catch(() => undefined));
+    if (!body.success) return fail(400, 'bad-request');
+    const scope = body.data.scope;
+    if (scope === 'stage' && !ctx.cache.clear) return fail(501, 'cache-maintenance-unavailable');
+    try {
+      await tasks[scope].maintain(async () => {
+        if (scope === 'stage') {
+          await ctx.cache.clear!();
+          await imageStore.clear('img-');
+        } else await speechStore.clear('tts-');
+      });
+      return json({ ok: true });
+    } catch (e) {
+      return fail(503, 'cache-clear-failed', e instanceof Error ? e.message : String(e));
+    }
+  }
 
   const emit = (e: ServerEvent): void => {
     for (const l of listeners) l(e);
@@ -93,6 +123,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     cache: ctx.cache,
     chainId: chain.join(','),
     budget: ctx.config.director.budget,
+    imagesAvailable: !!ctx.providers.imageChain?.length,
     onEvent: (e) => emit({ type: 'job', ...e }),
     log,
   });
@@ -140,13 +171,13 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     const book = await getBook(body.data.bookId);
     if (!book) return fail(404, 'unknown-book');
     if (!book.chapters.some((c) => c.sections.some((x) => x.id === body.data.sectionId))) return fail(404, 'unknown-section');
-    const { previous, budget, regenerate, select } = body.data;
+    const { previous, budget, prefer, regenerate, select } = body.data;
     try {
       return json(
         await director.plan(
           book,
           body.data.sectionId,
-          { ...(previous ? { previous } : {}), ...(budget ? { budget } : {}), ...(regenerate ? { regenerate } : {}), ...(select !== undefined ? { select } : {}) },
+          { ...(previous ? { previous } : {}), ...(budget ? { budget } : {}), ...(prefer ? { prefer } : {}), ...(regenerate ? { regenerate } : {}), ...(select !== undefined ? { select } : {}) },
           req.signal,
         ),
       );
@@ -181,7 +212,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
           coolingUntil: s?.coolingUntil ?? null,
           source: p instanceof CodexAuthLLM ? (p.lastSource ?? null) : null,
           login: p.id === 'codex-auth' || p.id === 'chatgpt-plan',
-          ...(p.kind === 'tts' ? { voices: p.voices } : {}),
+          ...(p.kind === 'tts' ? { voices: p.voices, concurrency: p.limits?.concurrency ?? 2 } : {}),
         };
       }),
     );
@@ -289,11 +320,13 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     if (req.method === 'GET' && path === '/api/capabilities') res = await capabilities();
     else if (req.method === 'GET' && path === '/api/usage') res = usage();
     else if (req.method === 'GET' && path === '/api/events') res = events(req);
-    else if (req.method === 'POST' && path === '/api/llm/plan') res = await plan(req);
-    else if (req.method === 'POST' && path === '/api/llm/prepare') res = await prepare(req);
-    else if (req.method === 'POST' && path === '/api/llm/animate') res = await animate(req);
-    else if (req.method === 'POST' && path === '/api/tts') res = await tts.handle(req);
-    else if (req.method === 'POST' && path === '/api/images') res = await images.handle(req, getBook);
+    else if (req.method === 'GET' && path === '/api/cache') res = await cacheStats();
+    else if (req.method === 'POST' && path === '/api/cache/clear') res = await clearCache(req);
+    else if (req.method === 'POST' && path === '/api/llm/plan') res = await run('stage', req, plan);
+    else if (req.method === 'POST' && path === '/api/llm/prepare') res = await run('stage', req, prepare);
+    else if (req.method === 'POST' && path === '/api/llm/animate') res = await run('stage', req, animate);
+    else if (req.method === 'POST' && path === '/api/tts') res = await run('speech', req, (r) => tts.handle(r));
+    else if (req.method === 'POST' && path === '/api/images') res = await run('stage', req, (r) => images.handle(r, getBook));
     else if (req.method === 'GET' && path.startsWith('/api/images/')) res = await images.serve(decodeURIComponent(path.slice('/api/images/'.length)));
     else if (req.method === 'PUT' && m?.[1]) res = await putBook(req, decodeURIComponent(m[1]));
     else if (req.method === 'POST' && m?.[2]) res = await login(decodeURIComponent(m[2]));

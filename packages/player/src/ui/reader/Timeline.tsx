@@ -3,6 +3,7 @@ import { useMemo, useRef } from 'preact/hooks';
 import type { ReaderSession } from '../../app/session.ts';
 import { t } from '../../i18n/i18n.ts';
 import { formatDuration, headingAt, nextSection, positionAt, prevSection, timelineMarkers } from '../../nav/navigation.ts';
+import { GenerationProgress } from './GenerationProgress.tsx';
 
 /**
  * Timeline bar (B8): chapter and section markers on the estimated time axis, current position,
@@ -32,6 +33,7 @@ export function Timeline({ session }: { session: ReaderSession }) {
 
   return (
     <div class="timeline">
+      <GenerationProgress session={session} />
       <div
         ref={track}
         class="timeline-track"

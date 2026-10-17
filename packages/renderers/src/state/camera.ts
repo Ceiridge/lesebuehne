@@ -9,10 +9,10 @@ export interface Camera {
 }
 
 /** Seconds a camera move to a focus region takes. */
-export const CAMERA_MOVE_SECONDS = 2.5;
+export const CAMERA_MOVE_SECONDS = 10;
 /** Share of the frame a focused region fills. */
 const REGION_FILL = 0.7;
-const MAX_SCALE = 2.2;
+const MAX_SCALE = 1.04;
 
 const ease = (p: number): number => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
 const clamp = (v: number, a: number, b: number): number => Math.min(b, Math.max(a, v));
@@ -33,7 +33,7 @@ const WHOLE: Camera = { x: 0.5, y: 0.5, scale: 1 };
 
 /**
  * Ken Burns camera at book time `t` (spec 005 B3), a pure function so seeking is exact: before
- * the first focus cue a slow drift over the whole picture; each focus cue eases from wherever
+ * the first focus cue the whole picture stays still; each focus cue eases from wherever
  * the camera is at that moment to its region. Reduced or no motion: the whole image, still.
  */
 export function cameraAt(spec: ImageSpec, focus: ReadonlyArray<{ time: number; regionId: string }>, t: number, motion: Motion): Camera {
@@ -43,11 +43,7 @@ export function cameraAt(spec: ImageSpec, focus: ReadonlyArray<{ time: number; r
   let to: Camera = WHOLE;
   let start = -Infinity;
   const at = (time: number): Camera => {
-    if (!from) {
-      // Drift: a slow breathing zoom around the centre.
-      const s = 1.04 + 0.03 * Math.sin(time / 11);
-      return bounded({ x: 0.5 + 0.02 * Math.sin(time / 17), y: 0.5 + 0.015 * Math.cos(time / 13), scale: s });
-    }
+    if (!from) return WHOLE;
     const p = ease(clamp((time - start) / CAMERA_MOVE_SECONDS, 0, 1));
     return bounded({ x: from.x + (to.x - from.x) * p, y: from.y + (to.y - from.y) * p, scale: from.scale + (to.scale - from.scale) * p });
   };

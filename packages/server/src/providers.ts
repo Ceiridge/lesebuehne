@@ -112,7 +112,7 @@ export function buildProviders(config: ServerConfig, dataDir: string, fetchImpl?
   for (const t of p.tts ?? []) {
     const voices = t.voices.map((v) => (typeof v === 'string' ? { id: v, name: v, languages: [] } : v));
     if (t.kind === 'qwentts') {
-      registry.register(qwentts({ id: t.id, ...(t.baseURL ? { baseURL: t.baseURL } : {}), voices, ...(typeof t.body?.seed === 'number' ? { seed: t.body.seed } : {}), ...f }));
+      registry.register(qwentts({ id: t.id, ...(t.baseURL ? { baseURL: t.baseURL } : {}), voices, ...(typeof t.body?.seed === 'number' ? { seed: t.body.seed } : {}), ...(t.concurrency ? { concurrency: t.concurrency } : {}), ...f }));
     } else if (t.kind === 'openai') {
       registry.register(openaiTTS({ id: t.id, ...(t.apiKey ? { apiKey: t.apiKey } : {}), ...(t.model ? { model: t.model } : {}), voices: voices.map((v) => v.id), ...f }));
     } else {
@@ -126,6 +126,7 @@ export function buildProviders(config: ServerConfig, dataDir: string, fetchImpl?
           ...(t.language ? { language: t.language } : {}),
           ...(t.format ? { format: t.format } : {}),
           ...(t.body ? { body: t.body } : {}),
+          ...(t.concurrency ? { concurrency: t.concurrency } : {}),
           ...f,
         }),
       );

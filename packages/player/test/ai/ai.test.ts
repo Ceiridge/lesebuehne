@@ -11,6 +11,7 @@ import { AI_PREFS_KEY, AiPrefsSchema, loadAiPrefs, maskKey } from '../../src/ai/
 import { setBackend } from '../../src/ai/state.ts';
 import { stageStep } from '../../src/ui/reader/StagePanel.tsx';
 import { bundleOf, makeEnv, openSession } from '../ui/support.ts';
+import { settings } from '../../src/app/store.ts';
 
 const text = (n: number) => `Kapitel ${n}: Habe Mut, dich deines eigenen Verstandes zu bedienen! Faulheit und Feigheit sind die Ursachen.`;
 const markdown = [1, 2, 3, 4].map((n) => `# Kapitel ${n}\n\n${text(n)}\n`).join('\n');
@@ -95,6 +96,154 @@ function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[
 const settle = () => new Promise((r) => setTimeout(r, 40));
 
 describe('T6: AI planner', () => {
+  test('hidden layouts abort stage work, suppress new jobs and resume with existing plans and style', async () => {
+    const before = settings.peek();
+    settings.value = { ...before, layout: 'rsvp' };
+    const session = await openSession(await makeEnv(), bundle);
+    const backend = new FakeBackend() as AiBackend;
+    const imagePlan: VisualPlan = { ...kinetic('Mut'), mode: 'image', image: { prompt: 'A candle', aspect: '16:9', focusRegions: [] } };
+    let planCalls = 0;
+    let styleCalls = 0;
+    backend.prepare = async () => { styleCalls++; return { styleBible: style, cached: false, variants: 1, selected: 0 }; };
+    backend.plan = async () => { planCalls++; return { plan: imagePlan, cached: false, fallback: false, variants: 1, selected: 0 }; };
+    const pending: Array<{ signal: AbortSignal; finish: () => void }> = [];
+    backend.image = async (_b, _id, _p, _o, signal) => {
+      await new Promise<void>((finish) => pending.push({ signal, finish }));
+      return { url: '/candle.png', cached: false, providerId: 'fake', variants: 1, selected: 0 };
+    };
+    session.attachAi(backend);
+    const planner = session.ai!;
+    const id = order[0]!.id;
+    try {
+      for (const layout of ['rsvp', 'page', 'sentence', 'focus'] as const) {
+        settings.value = { ...settings.peek(), layout };
+        planner.tick(0); planner.tick(10_000);
+        planner.schedule(id);
+        await planner.regenerate(id);
+        await planner.regenerateStyle();
+      }
+      expect(planCalls).toBe(0);
+      expect(styleCalls).toBe(0);
+      settings.value = { ...settings.peek(), layout: 'stage' };
+      await planner.regenerate(id);
+      await settle();
+      expect(pending).toHaveLength(1);
+      settings.value = { ...settings.peek(), layout: 'rsvp' };
+      expect(pending[0]!.signal.aborted).toBe(true);
+      expect(session.stageGeneration.peek().get(id)).toBe('idle');
+      planner.schedule(id);
+      await planner.regenerate(id);
+      expect(pending).toHaveLength(1);
+      settings.value = { ...settings.peek(), layout: 'cinema' };
+      const resumed = planner.regenerate(id);
+      await settle();
+      expect(session.ai).toBe(planner);
+      expect(pending).toHaveLength(2);
+      pending[0]!.finish();
+      await settle();
+      expect(session.images.peek().has(id)).toBe(false);
+      pending[1]!.finish();
+      await resumed;
+      expect(session.images.peek().get(id)?.url).toBe('/candle.png');
+      expect(planCalls).toBe(1);
+      expect(styleCalls).toBe(1);
+      settings.value = { ...settings.peek(), layout: 'page' };
+      expect(session.images.peek().get(id)?.url).toBe('/candle.png');
+    } finally { session.dispose(); settings.value = before; }
+  });
+
+  test('stage throughput includes plan and media time, counts each section once and excludes cached or failed pipelines', async () => {
+    const backend = new FakeBackend() as AiBackend;
+    const h = host();
+    const planner = new AiPlanner(h, backend);
+    let cached = false;
+    let fail = false;
+    let finish!: () => void;
+    const media = async () => {
+      await new Promise<void>((resolve) => { finish = resolve; });
+      if (fail) throw new Error('media failed');
+      return { cached, variants: 1, selected: 0 };
+    };
+    backend.plan = async (_book, id) => {
+      h.t += 1000;
+      const plan: VisualPlan = order.findIndex((s) => s.id === id) % 2
+        ? { ...kinetic('Mut'), mode: 'animation', animation: { brief: 'A moving candle' } }
+        : { ...kinetic('Mut'), mode: 'image', image: { prompt: 'A candle', aspect: '16:9', focusRegions: [] } };
+      return { plan, cached, fallback: false, variants: 1, selected: 0 };
+    };
+    backend.image = async () => ({ ...await media(), url: '/candle.png', providerId: 'fake' });
+    backend.animate = async () => ({ ...await media(), program: { version: 'test', code: EXAMPLE_PROGRAM } });
+    try {
+      for (const section of order) {
+        await planner.regenerate(section.id);
+        await settle();
+        // A finished plan cannot claim a whole section while its media is still pending.
+        expect(planner.generationSpeed.value).toBeUndefined();
+        h.t += 5000;
+        finish();
+        await settle();
+      }
+      const expected = order.reduce((n, s) => n + s.duration, 0) / (order.length * 6);
+      expect(planner.generationSpeed.value).toBeCloseTo(expected, 8);
+      cached = true;
+      await planner.regenerate(order[0]!.id);
+      await settle();
+      h.t += 10;
+      finish();
+      await settle();
+      expect(planner.generationSpeed.value).toBeCloseTo(expected, 8);
+      cached = false; fail = true;
+      await planner.regenerate(order[0]!.id);
+      await settle();
+      h.t += 20_000;
+      finish();
+      await settle();
+      expect(planner.generationSpeed.value).toBeCloseTo(expected, 8);
+    } finally { planner.dispose(); }
+  });
+
+  test('image progress stays unfinished until media arrives; a disposed planner cannot apply late media', async () => {
+    const backend: AiBackend = new FakeBackend();
+    const imagePlan: VisualPlan = { ...kinetic('Mut'), mode: 'image', image: { prompt: 'A candle in a study', aspect: '16:9', focusRegions: [] } };
+    backend.plan = async () => ({ plan: imagePlan, cached: false, fallback: false, variants: 1, selected: 0 });
+    let finish!: (r: any) => void;
+    backend.image = () => new Promise((resolve) => { finish = resolve; });
+    const states: string[] = [];
+    const h = host({ generation: (_id, state) => states.push(state) });
+    const planner = new AiPlanner(h, backend);
+    await planner.regenerate(order[0]!.id);
+    await settle();
+    expect(states.at(-1)).toBe('working');
+    expect(h.images).toHaveLength(0);
+    finish({ url: '/first.png', providerId: 'fake', variants: 1, selected: 0 });
+    await settle();
+    expect(states.at(-1)).toBe('ready');
+    expect(h.images).toHaveLength(1);
+    await planner.regenerate(order[0]!.id);
+    await settle();
+    planner.dispose();
+    const before = states.length;
+    finish({ url: '/late.png', providerId: 'fake', variants: 1, selected: 0 });
+    await settle();
+    expect(h.images).toHaveLength(1);
+    expect(states).toHaveLength(before);
+  });
+
+  test('preferred visual budget is transferred before earlier plans are deducted', async () => {
+    const applied = new Map<string, VisualPlan>();
+    const h = host({
+      book: { ...book, chapters: [{ ...book.chapters[0]!, sections: order }] },
+      prefer: () => 'images',
+      planOf: (id) => applied.get(id),
+      applyPlan: (id, p) => void applied.set(id, { ...p, mode: 'image' }),
+    });
+    const backend = new FakeBackend();
+    const p = new AiPlanner(h, backend);
+    for (const section of order) await p.regenerate(section.id);
+    expect(backend.calls.filter((c) => c.kind === 'plan').at(-1)?.opts).toMatchObject({ prefer: 'images', budget: { images: 2, animations: 0 } });
+    p.dispose();
+  });
+
   test('window: current, look-ahead by listening time, previous last', () => {
     const p = new AiPlanner(host(), new FakeBackend());
     const w = p.window(order[1]!.id);
@@ -182,7 +331,7 @@ describe('M3: animations in the planner and session', () => {
     p.schedule(order[0]!.id);
     await settle();
     expect(backend.animations.map((a) => a.sectionId)).toContain(order[0]!.id);
-    expect(h.animated[0]?.[1].code).toContain('lb.polar');
+    expect(h.animated[0]?.[1].code).toContain(EXAMPLE_PROGRAM);
     p.animationFailed(order[0]!.id, 'k1', 'boom');
     p.animationFailed(order[0]!.id, 'k1', 'boom'); // same program: no second repair
     await settle();
@@ -337,7 +486,7 @@ describe('M4: server voices in the session', () => {
           { id: 'en-only', label: 'e', available: true, reason: null, login: false, source: null, kind: 'tts', voices: [{ id: 'x', name: 'X', languages: ['en'] }] },
         ],
       };
-      ttsBuffer.value = { prefetch: (items: Array<{ text: string; voice: string }>) => void prefetched.push(items), clip: async () => ({ url: '', words: [] }) } as never;
+      ttsBuffer.value = { prefetch: (items: Array<{ text: string; voice: string }>) => void prefetched.push(items), setConcurrency: () => undefined, clip: async () => ({ url: '', words: [] }), dispose: () => undefined } as never;
       const t = await makeEnv({ voices: [{ voiceURI: 'web-de', name: 'Katja', lang: 'de-DE', localService: true, default: true }] });
       const session = await openSession(t, bundle);
       expect(session.voices.map((v) => v.voiceURI)).toEqual(['tts:qwentts:vivian', 'web-de']);

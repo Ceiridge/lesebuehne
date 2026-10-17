@@ -18,10 +18,9 @@ const focus = [
 ];
 
 describe('M5: Ken Burns camera', () => {
-  test('drift before the first cue; eases to the region; the frame stays inside the image', () => {
+  test('still before the first cue; gentle focus stays below four percent zoom and inside the image', () => {
     const before = cameraAt(spec, focus, 5, 'full');
-    expect(before.scale).toBeGreaterThan(1);
-    expect(before.scale).toBeLessThan(1.1);
+    expect(before.scale).toBe(1);
     const done = cameraAt(spec, focus, 10 + CAMERA_MOVE_SECONDS, 'full');
     expect(done).toEqual(cameraFor(spec.focusRegions[0]!));
     const mid = cameraAt(spec, focus, 10 + CAMERA_MOVE_SECONDS / 2, 'full');
@@ -29,6 +28,7 @@ describe('M5: Ken Burns camera', () => {
     expect(mid.scale).toBeLessThan(done.scale);
     for (const t of [0, 7, 11, 15, 21, 40]) {
       const c = cameraAt(spec, focus, t, 'full');
+      expect(c.scale).toBeLessThanOrEqual(1.04);
       const half = 0.5 / c.scale;
       expect(c.x - half).toBeGreaterThanOrEqual(-1e-9);
       expect(c.x + half).toBeLessThanOrEqual(1 + 1e-9);
@@ -70,9 +70,10 @@ describe('M5: image and placeholder views', () => {
     const s = visualState(plan, [1, 10], 15, 'full', { image: { url: 'api/images/x.png' } });
     expect(s.mode).toBe('image');
     if (s.mode !== 'image') return;
-    expect(s.camera).toEqual(cameraFor(spec.focusRegions[0]!));
+    expect(s.camera.scale).toBeGreaterThan(1);
+    expect(s.camera.scale).toBeLessThanOrEqual(1.04);
     render(<Visual state={s} />, root);
-    const img = root.querySelector('img')!;
+    const img = root.querySelector('.lb-image-picture')!;
     expect(img.getAttribute('src')).toBe('api/images/x.png');
     expect(img.getAttribute('style')).toContain('scale(');
     expect(root.querySelector('.lb-image-fallback .lb-placeholder')).not.toBeNull();

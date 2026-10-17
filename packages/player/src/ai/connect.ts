@@ -8,6 +8,8 @@ import { aiBackend, refreshDetails, setBackend } from './state.ts';
 
 export const aiPrefs = signal<AiPrefs | undefined>(undefined);
 export const aiConnecting = signal(false);
+/** Provider edits are applied together, so typing never tears down active speech. */
+export const aiDraft = signal<AiPrefs | undefined>(undefined);
 
 let generation = 0;
 
@@ -29,10 +31,15 @@ export async function connectAi(env: AppEnv): Promise<void> {
       ...(env.indexedDB ? { cache: () => new IdbResultCache(env.indexedDB!), media: () => new IdbMediaStore(env.indexedDB!) } : {}),
     });
     if (mine !== generation) return;
-    setBackend(backend);
     const r = route.value;
-    if (r.name === 'reader') r.session.attachAi(aiBackend.value);
-    void refreshDetails();
+    if (r.name === 'reader') r.session.engine.pause();
+    setBackend(backend);
+    await refreshDetails();
+    if (mine !== generation) return;
+    if (r.name === 'reader') {
+      await r.session.refreshVoices();
+      r.session.attachAi(aiBackend.value);
+    }
   } finally {
     if (mine === generation) aiConnecting.value = false;
   }

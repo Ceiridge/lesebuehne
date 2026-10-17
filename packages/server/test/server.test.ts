@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApi, DEFAULT_CONFIG, DiskCache, envOverrides, mergeConfig, type ApiContext, type ServerConfig } from '../src/index.ts';
+import { DiskStore } from '../src/disk-store.ts';
 
 const tmp = await mkdtemp(join(tmpdir(), 'lb-server-'));
 afterAll(() => rm(tmp, { recursive: true, force: true }));
@@ -36,12 +37,12 @@ const plan = (term: string) =>
     fallback: 'none',
   });
 
-function setup(fakes: FakeLLM[], config: Partial<ServerConfig> = {}): { api: ReturnType<typeof createApi>; ctx: ApiContext } {
+function setup(fakes: FakeLLM[], config: Partial<ServerConfig> = {}, dataDir = tmp): { api: ReturnType<typeof createApi>; ctx: ApiContext } {
   const registry = new ProviderRegistry();
   for (const f of fakes) registry.register(f);
   const ctx: ApiContext = {
     config: { ...DEFAULT_CONFIG, ...config },
-    dataDir: tmp,
+    dataDir,
     providers: { registry, chain: fakes.map((f) => f.id), imageChain: ['fake-image'], taskModel: () => undefined, files: { codexToken: join(tmp, 'c.json'), planStore: join(tmp, 'p.json') } },
     cache: new MemoryCache(),
   };
@@ -80,6 +81,55 @@ describe('T5: config', () => {
 });
 
 describe('T5: API', () => {
+  test('cache maintenance drains late generation, separates stage and speech, and preserves books', async () => {
+    const dir = join(tmp, 'maintenance');
+    let release!: () => void, started!: () => void;
+    const wait = new Promise<void>((r) => { release = r; });
+    const entered = new Promise<void>((r) => { started = r; });
+    const fake = new FakeLLM({ id: 'slow', answers: [plan('Mut')] });
+    const complete = fake.completeJSON.bind(fake);
+    fake.completeJSON = async (req) => { started(); await wait; return complete({ ...req, signal: new AbortController().signal }); };
+    const { ctx } = setup([fake], {}, dir);
+    const cache = new DiskCache(join(dir, 'cache'));
+    const api = createApi({ ...ctx, cache });
+    const speech = new DiskStore(join(dir, 'cache', 'tts'));
+    const images = new DiskStore(join(dir, 'cache', 'images'));
+    await speech.put('tts-one.wav', new Uint8Array([1, 2, 3]));
+    await images.put('img-one.png', new Uint8Array([4, 5]));
+    await call(api, 'PUT', `/api/books/${encodeURIComponent(book.id)}`, book);
+    const pending = call(api, 'POST', '/api/llm/plan', { bookId: book.id, sectionId });
+    await entered;
+    const clearing = call(api, 'POST', '/api/cache/clear', { scope: 'stage' });
+    await Bun.sleep(5);
+    release();
+    await pending;
+    expect((await clearing).status).toBe(200);
+    expect(await (await call(api, 'GET', '/api/cache')).json()).toEqual({ stage: { entries: 0, bytes: 0 }, speech: { entries: 1, bytes: 3 } });
+    const after = await (await call(api, 'POST', '/api/llm/plan', { bookId: book.id, sectionId })).json() as { cached: boolean; fallback: boolean };
+    expect(after).toMatchObject({ cached: false, fallback: false }); // uploaded book survived
+    expect((await call(api, 'POST', '/api/cache/clear', { scope: 'speech' })).status).toBe(200);
+    expect((await cache.stats()).entries).toBe(1); // speech clear preserves the new plan
+    expect(await speech.get('tts-one.wav')).toBeUndefined();
+    expect((await call(api, 'POST', '/api/cache/clear', { scope: '../../books' })).status).toBe(400);
+    api.close();
+  });
+
+  test('visual preference reaches planning, excludes the other kind and separates cached plans', async () => {
+    const answer = JSON.stringify({ ...JSON.parse(plan('Mut')), mode: 'image', image: { prompt: 'An eighteenth-century study with books', aspect: '16:9', focusRegions: [] } });
+    const fake = new FakeLLM({ id: 'fake-preference', answers: [answer] });
+    const { api } = setup([fake], {}, join(tmp, 'preference'));
+    await call(api, 'PUT', `/api/books/${encodeURIComponent(book.id)}`, book);
+    const request = (prefer: string) => call(api, 'POST', '/api/llm/plan', { bookId: book.id, sectionId, prefer });
+    expect((await request('invalid')).status).toBe(400);
+    const images = await (await request('images')).json() as { plan: { mode: string }; cached: boolean };
+    expect(images.plan.mode).toBe('image');
+    const animations = await (await request('animations')).json() as { plan: { mode: string }; cached: boolean };
+    expect(animations.plan.mode).not.toBe('image');
+    expect(animations.cached).toBe(false);
+    expect(await (await request('images')).json()).toMatchObject({ cached: true, plan: { mode: 'image' } });
+    expect(fake.requests).toHaveLength(2);
+  });
+
   test('host and origin guard; CORS only for allowed origins', async () => {
     const { api } = setup([], { server: { port: 8787, origins: ['http://127.0.0.1:3000'] } });
     expect((await call(api, 'GET', '/api/capabilities', undefined, { host: 'evil.example' })).status).toBe(403);

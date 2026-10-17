@@ -13,6 +13,7 @@ import type { LibraryService } from '../../storage/library.ts';
 import type { LibraryEntry } from '../../storage/repository.ts';
 import { IconBook, IconLogo, IconTrash, IconUpload } from '../icons.tsx';
 import { AiSettings } from '../reader/AiSettings.tsx';
+import { Drawer } from '../reader/Panels.tsx';
 import { QuickPrefs } from './QuickPrefs.tsx';
 
 export const LAST_BOOK_KEY = 'lesebuehne.lastBook';
@@ -294,17 +295,7 @@ export function StartPage() {
 /** AI settings without an open book (spec 006 B5). */
 function AiDialog({ onClose }: { onClose: () => void }) {
   return (
-    <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
-        <div class="modal-head">
-          <h2 id="ai-dialog-title">{t('start.aiTitle')}</h2>
-          <button type="button" class="btn btn-ghost small" onClick={onClose}>
-            {t('start.close')}
-          </button>
-        </div>
-        <AiSettings />
-      </div>
-    </div>
+    <Drawer title={t('start.aiTitle')} onClose={onClose} wide><div class="standalone-ai"><AiSettings /></div></Drawer>
   );
 }
 

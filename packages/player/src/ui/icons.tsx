@@ -164,6 +164,15 @@ export const IconSentence = (p: IconProps) => (
     <path d="M6 17h12" opacity="0.45" />
   </Svg>
 );
+/** One word on a fixed axis (RSVP). */
+export const IconRsvp = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12h7" opacity="0.45" />
+    <path d="M14 12h7" opacity="0.45" />
+    <path d="M12 5v3M12 16v3" />
+    <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
+  </Svg>
+);
 export const IconSubtitles = (p: IconProps) => (
   <Svg {...p}>
     <rect x="3" y="5" width="18" height="14" rx="2.5" />

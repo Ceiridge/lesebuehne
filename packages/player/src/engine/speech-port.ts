@@ -7,6 +7,9 @@ export interface UtteranceRequest {
   voiceURI?: string;
   /** Speech rate = tempo (0.75 … 2.5). */
   rate: number;
+  /** Start at this character in a cached generated-audio clip. */
+  startOffset?: number;
+  volume?: number;
   onStart(): void;
   /** `charIndex` relative to `text`; `name` is `word` or `sentence`. */
   onBoundary(charIndex: number, name: string): void;
@@ -18,6 +21,7 @@ export interface UtteranceRequest {
 export interface SpeechPort {
   speak(request: UtteranceRequest): void;
   cancel(): void;
+  setVolume?(volume: number): void;
 }
 
 /** The parts of the Web Speech API the adapter uses. */
@@ -34,14 +38,17 @@ export interface SynthLike {
 export function createWebSpeechPort(synth: SynthLike, Utterance: typeof SpeechSynthesisUtterance): SpeechPort {
   const live = new Set<SpeechSynthesisUtterance>();
   let pendingTimer: ReturnType<typeof setTimeout> | undefined;
+  let volume = 1;
   return {
     speak(r) {
+      volume = r.volume ?? volume;
       if (pendingTimer !== undefined) clearTimeout(pendingTimer);
       pendingTimer = setTimeout(() => {
         pendingTimer = undefined;
         const u = new Utterance(r.text);
         u.lang = r.lang;
         u.rate = r.rate;
+        u.volume = volume;
         const voice = r.voiceURI ? synth.getVoices().find((v) => v.voiceURI === r.voiceURI) : undefined;
         if (voice) u.voice = voice;
         const release = (): void => {
@@ -66,6 +73,10 @@ export function createWebSpeechPort(synth: SynthLike, Utterance: typeof SpeechSy
       pendingTimer = undefined;
       synth.cancel();
       live.clear();
+    },
+    setVolume(value) {
+      volume = value;
+      for (const u of live) u.volume = value;
     },
   };
 }

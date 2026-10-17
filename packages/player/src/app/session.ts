@@ -12,6 +12,7 @@ import {
   type StyleBible,
   type Timeline,
   type VisualPlan,
+  type CacheScope,
 } from '@lesebuehne/core';
 import { planSection, type ForcedMode } from '@lesebuehne/director';
 import { resolveCueTimes, StageScheduler } from '@lesebuehne/renderers';
@@ -19,9 +20,12 @@ import { batch, computed, effect, signal } from '@preact/signals';
 import { AiPlanner, type PlanInfo } from '../ai/planner.ts';
 import type { AiBackend } from '../ai/backends.ts';
 import { aiBackend, aiDetails, refreshDetails, ttsBuffer, ttsVoices } from '../ai/state.ts';
+import { TtsBuffer } from '../ai/tts.ts';
+import { mergeRanges, type GenerationRange, type GenerationState } from '../ai/progress.ts';
 import { isTtsVoice, TTS_VOICE_PREFIX } from '../engine/audio-port.ts';
-import { footnoteLookup, sentenceItems } from '../engine/queue.ts';
+import { footnoteLookup, sectionEndItems, sentenceItems } from '../engine/queue.ts';
 import { PlayerEngine, type Position } from '../engine/engine.ts';
+import { RsvpPacer } from '../engine/rsvp.ts';
 import { selectVoice, type VoiceChoice, type VoiceInfo } from '../engine/voices.ts';
 import { autoFollow, type FollowEvent, type FollowState } from '../nav/follow.ts';
 import { headingAt } from '../nav/navigation.ts';
@@ -65,6 +69,9 @@ export class ReaderSession {
   readonly bookmarks = signal<Bookmark[]>([]);
   readonly follow = signal<FollowState>('follow');
   readonly panel = signal<Panel | null>(null);
+  readonly settingsTab = signal<'reading' | 'appearance' | 'stage' | 'ai' | 'storage'>('reading');
+  readonly stageCachePaused = signal(false);
+  private readonly speechCachePaused = signal(false);
   readonly debug = signal(false);
   readonly popover = signal<{ footnoteId: string; x: number; y: number } | null>(null);
   readonly voices: VoiceInfo[];
@@ -83,6 +90,41 @@ export class ReaderSession {
   readonly images = signal<ReadonlyMap<string, { url: string; providerId: string; variants: number; selected: number }>>(new Map());
   /** Animation programs by section (spec 003). */
   readonly animations = signal<ReadonlyMap<string, AnimationEntry>>(new Map());
+  readonly stageGeneration = signal<ReadonlyMap<string, GenerationState>>(new Map());
+  readonly generation = computed(() => {
+    const stage: GenerationRange[] = [];
+    const speech: GenerationRange[] = [];
+    const states = this.stageGeneration.value;
+    const buffer = ttsBuffer.value;
+    const uri = this.engine.currentVoice?.voiceURI;
+    const voice = isTtsVoice(uri) ? uri!.slice(TTS_VOICE_PREFIX.length) : undefined;
+    const chunks = this.speechRanges.value;
+    const plans = this.plans.value;
+    const planned = this.planInfo.value;
+    for (const entry of this.timeline.entries) {
+      const state = states.get(entry.sectionId) ?? 'idle';
+      // Do not label a queued AI decision with the temporary heuristic's mode.
+      const mode = (state === 'working' || state === 'queued') && !planned.has(entry.sectionId) ? undefined : plans.get(entry.sectionId)?.mode;
+      stage.push({ start: entry.start, end: entry.end, sectionId: entry.sectionId, state, ...(mode ? { stageKind: mode } : {}) });
+    }
+    if (voice && buffer) {
+      for (const chunk of chunks) speech.push({ ...chunk, state: buffer.stateOf(chunk.text, this.book.language, voice) });
+    }
+    return { stage: mergeRanges(stage), speech: mergeRanges(speech), speechEnabled: !!voice && !!buffer };
+  });
+  private readonly speechRanges = computed(() => {
+    const mode = settings.value.footnoteMode;
+    return this.timeline.entries.flatMap((entry, i) => {
+      const items = sentenceItems(i, entry, 0, mode, this.footnotes, this.book.language, true);
+      const length = items.reduce((n, item) => n + item.text.length, 0);
+      let at = entry.start;
+      return items.map((item) => {
+        const start = at;
+        at += (entry.end - entry.start) * item.text.length / Math.max(1, length);
+        return { start, end: at, sectionId: entry.sectionId, text: item.text };
+      });
+    });
+  });
   /** LLM director, when an AI backend is available (B8). */
   ai: AiPlanner | undefined;
   private readonly aiPlans = new Map<string, VisualPlan>();
@@ -115,9 +157,10 @@ export class ReaderSession {
     this.engine = new PlayerEngine({
       book: this.book,
       timeline: this.timeline,
-      port: choice.mode === 'voice' ? env.speech?.port : undefined,
+      port: env.speech?.port,
       voice: choice.mode === 'voice' ? choice.voice : undefined,
       tempo: settings.value.tempo,
+      volume: settings.value.volume,
       footnoteMode: settings.value.footnoteMode,
       timers: env.timers,
       start: o.start,
@@ -128,44 +171,118 @@ export class ReaderSession {
     this.replanAll();
     this.attachAi(aiBackend.value);
     this.stopPrefetch = effect(() => this.prefetchTts(this.engine.position.value.entryIndex));
+    this.rsvp = new RsvpPacer({
+      timeline: this.timeline,
+      timers: env.timers,
+      position: () => this.engine.position.value,
+      seek: (p) => this.engine.seek(p),
+      wpm: () => settings.value.rsvpWpm,
+    });
+    // Leaving the RSVP pace (other layout, voice reading again) stops the pacer.
+    this.stopRsvpGuard = effect(() => {
+      if (!this.pacerMode) this.rsvp.stop();
+      else this.engine.pause();
+    });
+    this.stopVolume = effect(() => this.engine.setVolume(settings.value.volume));
+    this.stopStageVisibility = effect(() => { const visible = this.stageVisible; this.ai?.setActive(visible); });
+    let preference = settings.peek().visualKinds;
+    this.stopPreference = effect(() => {
+      const next = settings.value.visualKinds;
+      if (next === preference) return;
+      preference = next;
+      this.attachAi(aiBackend.peek());
+    });
+  }
+
+  /** Word-by-word pacer for the RSVP layout without a voice (spec 007 B1). */
+  readonly rsvp: RsvpPacer;
+  private readonly stopRsvpGuard: () => void;
+  private readonly stopVolume: () => void;
+  private readonly stopPreference: () => void;
+  private readonly stopStageVisibility: () => void;
+
+  get stageVisible(): boolean {
+    const layout = settings.value.layout;
+    return layout === 'stage' || layout === 'cinema';
+  }
+
+  /** The RSVP layout paces itself (no voice, or "RSVP without voice"); play toggles the pacer. */
+  get pacerMode(): boolean {
+    const s = settings.value;
+    return s.layout === 'rsvp' && (this.engine.silent || s.rsvpSilent);
+  }
+
+  /** Playing: the voice, or the RSVP pacer in pacer mode. */
+  get isPlaying(): boolean {
+    return this.pacerMode ? this.rsvp.running.value : this.engine.playing.value;
   }
 
   private readonly stopPrefetch: () => void;
   private lastPrefetch = -1;
+  private prefetchSignature = '';
+  private prefetchBuffer: TtsBuffer | undefined;
   private footnotesCache: ReturnType<typeof footnoteLookup> | undefined;
   private get footnotes(): ReturnType<typeof footnoteLookup> {
     return (this.footnotesCache ??= footnoteLookup(this.book));
   }
 
   /**
-   * Server TTS prefetch (spec 004 B4): the utterances of the next ~60 s of listening, in the
-   * engine's chunking, so playback finds them ready; a jump replaces the window.
+   * Keep two minutes of listening ahead, scaled by playback speed. Refresh on chunk, voice,
+   * tempo, footnote mode or connection changes; word boundaries within a chunk cost nothing.
    */
   private prefetchTts(entryIndex: number): void {
     const voiceURI = this.engine?.currentVoice?.voiceURI;
     const buffer = ttsBuffer.value;
-    if (!buffer || !isTtsVoice(voiceURI) || entryIndex === this.lastPrefetch) return;
-    this.lastPrefetch = entryIndex;
+    const tempo = this.engine.currentTempo;
+    const mode = settings.value.footnoteMode;
+    const providers = aiDetails.value?.providers;
+    if (this.pacerMode || this.speechCachePaused.value || !isTtsVoice(voiceURI)) {
+      if (this.lastPrefetch !== -1) buffer?.prefetch([]);
+      this.lastPrefetch = -1;
+      return;
+    }
+    if (!buffer) return;
     const voice = voiceURI!.slice(TTS_VOICE_PREFIX.length);
     const lang = this.book.language;
+    const current = this.timeline.entries[entryIndex];
+    const currentItems = current ? sentenceItems(entryIndex, current, this.engine.position.value.tokenIndex, mode, this.footnotes, lang, true) : [];
+    const provider = providers?.find((p) => p.id === voice.split(':')[0] && p.kind === 'tts');
+    const concurrency = provider ? provider.concurrency ?? 4 : undefined;
+    const signature = `${voiceURI}|${tempo}|${mode}|${concurrency}|${currentItems[0]?.text ?? ''}`;
+    if (entryIndex === this.lastPrefetch && signature === this.prefetchSignature && buffer === this.prefetchBuffer) return;
+    this.lastPrefetch = entryIndex;
+    this.prefetchSignature = signature;
+    this.prefetchBuffer = buffer;
     const items: Array<{ text: string; lang: string; voice: string }> = [];
     let seconds = 0;
-    const tempo = this.engine.currentTempo;
-    for (let i = entryIndex; i < this.timeline.entries.length && seconds < 60 && items.length < 40; i++) {
+    for (let i = entryIndex; i < this.timeline.entries.length && seconds < 120 && items.length < 120; i++) {
       const entry = this.timeline.entries[i]!;
-      const from = i === entryIndex ? this.engine.position.value.tokenIndex : 0;
-      for (const item of sentenceItems(i, entry, from, settings.value.footnoteMode, this.footnotes, lang)) items.push({ text: item.text, lang, voice });
+      const chunks = i === entryIndex ? currentItems : sentenceItems(i, entry, 0, mode, this.footnotes, lang, true);
+      for (const item of chunks) {
+        if (items.length >= 120) break;
+        items.push({ text: item.text, lang, voice });
+      }
+      if (mode === 'section-end' && this.timeline.entries[i + 1]?.sectionId !== entry.sectionId) {
+        for (const item of sectionEndItems(this.sections.get(entry.sectionId)?.footnoteIds ?? [], this.footnotes, i, entry)) {
+          if (items.length >= 120) break;
+          items.push({ text: item.text, lang, voice });
+          seconds += item.text.length / 14 / tempo;
+        }
+      }
       seconds += (entry.end - entry.start) / tempo;
     }
     buffer.prefetch(items);
+    if (concurrency !== undefined) buffer.setConcurrency(concurrency);
   }
 
   /** (Re)connects the LLM director, e.g. after the provider settings changed. */
   attachAi(backend: AiBackend | undefined): void {
+    if (this.disposed) return;
     this.ai?.dispose();
+    this.stageGeneration.value = new Map();
     const env = this.env;
     // A browser setup with only voices or images (no text model) keeps the heuristic plans.
-    this.ai = backend && backend.plans !== false
+    this.ai = backend && backend.plans !== false && !this.stageCachePaused.peek()
       ? new AiPlanner(
           {
             book: this.book,
@@ -177,10 +294,13 @@ export class ReaderSession {
             applyAnimation: (id, program, info) => this.setAnimation(id, program, info),
             applyImage: (id, image) => (this.images.value = new Map(this.images.value).set(id, image)),
             now: () => env.timers.now(),
+            prefer: () => (settings.value.visualKinds === 'mixed' ? undefined : settings.value.visualKinds),
+            generation: (id, state) => { this.stageGeneration.value = new Map(this.stageGeneration.peek()).set(id, state); },
           },
           backend,
         )
       : undefined;
+    this.ai?.setActive(this.stageVisible);
   }
 
   static async open(env: AppEnv, library: LibraryService, bundle: BookBundle, o: OpenOptions): Promise<ReaderSession> {
@@ -319,17 +439,69 @@ export class ReaderSession {
 
   /** User navigation: move the clock (restart speech if playing), switch the stage now (B8, B9). */
   navigate(p: Position): void {
+    const resume = this.rsvp.running.value;
+    this.rsvp.stop();
     batch(() => {
       this.engine.seek(p);
       this.followEvent('navigate');
     });
+    if (resume && this.pacerMode) this.rsvp.start();
     const section = this.sectionIdAt(this.engine.position.value.entryIndex);
     if (section) this.stage.navigate(this.stageKey(section), this.env.timers.now());
   }
 
   togglePlay(): void {
+    if (this.pacerMode) {
+      this.engine.pause();
+      this.rsvp.toggle();
+      return;
+    }
+    this.speechCachePaused.value = false;
     if (!this.engine.playing.value) this.followEvent('play');
     this.engine.toggle();
+  }
+
+  async clearCache(scope: CacheScope): Promise<void> {
+    const backend = aiBackend.peek();
+    if (!backend?.clearCache) throw new Error('cache maintenance unavailable');
+    if (scope === 'stage') {
+      this.stageCachePaused.value = true;
+      this.attachAi(undefined);
+      try {
+        await backend.clearCache(scope);
+        this.aiPlans.clear();
+        this.keyPlans.clear();
+        this.planInfo.value = new Map();
+        this.images.value = new Map();
+        this.animations.value = new Map();
+        this.styleBible.value = undefined;
+        for (const id of this.sections.keys()) this.replan(id);
+        this.cueCache.clear();
+        const id = this.sectionIdAt(this.engine.position.peek().entryIndex);
+        if (id) this.stage.navigate(this.stageKey(id), this.env.timers.now());
+      } catch (e) {
+        this.resumeStage();
+        throw e;
+      }
+    } else {
+      this.engine.pause();
+      this.speechCachePaused.value = true;
+      ttsBuffer.peek()?.dispose();
+      try { await backend.clearCache(scope); }
+      finally {
+        this.lastPrefetch = -1;
+        if (aiBackend.peek() === backend && backend.tts) {
+          const buffer = new TtsBuffer((text, lang, voice, signal) => backend.tts!(text, lang, voice, signal));
+          buffer.setConcurrency(Math.max(1, ...(aiDetails.peek()?.providers ?? []).filter((p) => p.kind === 'tts').map((p) => p.concurrency ?? 4)));
+          ttsBuffer.value = buffer;
+        }
+      }
+    }
+  }
+
+  resumeStage(): void {
+    this.stageCachePaused.value = false;
+    this.attachAi(aiBackend.peek());
   }
 
   forcedMode(sectionId: string): ForcedMode {
@@ -404,6 +576,18 @@ export class ReaderSession {
     this.prefetchTts(this.engine.position.value.entryIndex);
   }
 
+  async refreshVoices(): Promise<void> {
+    const web = await this.env.speech?.voices().catch(() => []) ?? [];
+    if (this.disposed) return;
+    this.voices.splice(0, this.voices.length, ...ttsVoices(this.book.language), ...web);
+    const choice = selectVoice(this.voices, this.book.language, settings.peek().voiceByLang[primaryLanguage(this.book.language)]);
+    this.voiceChoice.value = choice;
+    const next = choice.mode === 'voice' ? choice.voice : undefined;
+    if (this.engine.currentVoice?.voiceURI !== next?.voiceURI) this.engine.setVoice(next);
+    this.lastPrefetch = -1;
+    this.prefetchTts(this.engine.position.peek().entryIndex);
+  }
+
   savePosition(): Promise<void> {
     return this.library.savePosition(this.book.id, this.timeline, this.engine.position.value);
   }
@@ -425,6 +609,11 @@ export class ReaderSession {
     if (this.disposed) return;
     this.disposed = true;
     this.stopPrefetch();
+    this.stopRsvpGuard();
+    this.stopVolume();
+    this.stopPreference();
+    this.stopStageVisibility();
+    this.rsvp.stop();
     this.ai?.dispose();
     void this.savePosition();
     this.engine.dispose();

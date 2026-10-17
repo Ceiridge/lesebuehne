@@ -1,4 +1,5 @@
 import { primaryLanguage } from '@lesebuehne/core';
+import { useEffect, useState } from 'preact/hooks';
 import type { ReaderSession } from '../../app/session.ts';
 import { settings } from '../../app/store.ts';
 import { matchingVoices, type VoiceInfo } from '../../engine/voices.ts';
@@ -9,6 +10,11 @@ import { IconSpeaker } from '../icons.tsx';
 import { setTempo } from './Controls.tsx';
 import { AiSettings } from './AiSettings.tsx';
 import { Drawer } from './Panels.tsx';
+import { VolumeSlider } from './VolumeControl.tsx';
+import { StorageSettings } from './StorageSettings.tsx';
+import { StageSettings } from './StageSettings.tsx';
+
+const TASKS = ['reading', 'appearance', 'stage', 'ai', 'storage'] as const;
 
 function update(patch: Partial<Settings>): void {
   settings.value = { ...settings.value, ...patch };
@@ -50,6 +56,13 @@ function Slider({ field, label, unit, format }: { field: 'fontSize' | 'lineHeigh
 /** Settings panel (B8): every change applies live through CSS variables and signals. */
 export function SettingsPanel({ session }: { session: ReaderSession }) {
   const s = settings.value;
+  const tab = session.settingsTab.value;
+  void session.voiceChoice.value;
+  const [voiceSearch, setVoiceSearch] = useState('');
+  useEffect(() => {
+    const body = document.getElementById(`settings-panel-${tab}`)?.closest('.settings-content');
+    if (body) body.scrollTop = 0;
+  }, [tab]);
   const lang = session.book.language;
   const matching = new Set(matchingVoices(session.voices, lang).map((v) => v.voiceURI));
   const voices = [...session.voices].sort(
@@ -61,12 +74,14 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
     const port = session.env.speech?.port;
     if (!port) return;
     session.engine.pause();
+    session.rsvp.stop();
     port.cancel();
     port.speak({
       text: primaryLanguage(v.lang) === 'en' ? CATALOG_PREVIEW.en : CATALOG_PREVIEW.de,
       lang: v.lang,
       voiceURI: v.voiceURI,
       rate: s.tempo,
+      volume: s.volume,
       onStart: () => undefined,
       onBoundary: () => undefined,
       onEnd: () => undefined,
@@ -76,11 +91,29 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
 
   return (
     <Drawer title={t('settings.title')} onClose={() => (session.panel.value = null)} wide>
+      <div class="settings-workspace">
+      <div class="settings-sidebar">
+      <p class="settings-question">{t('settings.taskPrompt')}</p>
+      <div class="settings-nav" role="tablist" aria-label={t('settings.title')} onKeyDown={(e) => {
+        const tabs = TASKS;
+        const index = tabs.indexOf(tab);
+        const next = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? (index + 1) % tabs.length : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? (index + tabs.length - 1) % tabs.length : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : -1;
+        if (next < 0) return;
+        e.preventDefault();
+        session.settingsTab.value = tabs[next]!;
+        document.getElementById(`settings-tab-${tabs[next]}`)?.focus();
+      }}>
+        {TASKS.map((id) => <button type="button" key={id} id={`settings-tab-${id}`} role="tab" aria-selected={tab === id} aria-controls={`settings-panel-${id}`} tabIndex={tab === id ? 0 : -1} onClick={() => (session.settingsTab.value = id)}><strong>{t(`settings.tab.${id}`)}</strong><span>{t(`settings.taskHint.${id}`)}</span></button>)}
+      </div>
+      </div>
+      <div class="settings-content">
+
+      <section id="settings-panel-appearance" role="tabpanel" aria-labelledby="settings-tab-appearance" hidden={tab !== 'appearance'}>
+      <header class="settings-intro"><h3>{t('settings.tab.appearance')}</h3><p>{t('settings.appearanceHint')}</p></header>
       <p class="settings-preview" lang={lang === 'en' ? 'en' : 'de'}>
         {t('settings.sample')}
       </p>
 
-      <h3 class="settings-group">{t('settings.appearance')}</h3>
       <div class="field">
         <span class="field-label" id="theme-label">
           {t('settings.theme')}
@@ -109,25 +142,34 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
         </div>
       </div>
       <Slider field="fontSize" label="settings.fontSize" unit=" px" />
+      <details class="settings-fold"><summary>{t('settings.typographyDetails')}</summary><div class="fold-body">
       <Slider field="lineHeight" label="settings.lineHeight" format={(v) => v.toFixed(2)} />
       <Slider field="measure" label="settings.measure" unit=" ch" />
       <Slider field="margins" label="settings.margins" unit=" px" />
       <Slider field="paragraphSpacing" label="settings.paragraphSpacing" format={(v) => `${v.toFixed(1)} em`} />
       <Segmented field="align" label="settings.align" options={['left', 'justify']} />
+      </div></details>
+      <details class="settings-fold"><summary>{t('settings.focusDetails')}</summary><div class="fold-body">
       <Segmented field="highlightStyle" label="settings.highlight" options={['background', 'underline']} />
       <Segmented field="dimming" label="settings.dimming" options={['off', 'light', 'strong']} />
-      <Segmented field="motion" label="settings.motion" options={['full', 'reduced', 'none']} />
+      </div></details>
+      </section>
 
-      <h3 class="settings-group" id="settings-voice">
-        {t('settings.reading')}
-      </h3>
+      <section id="settings-panel-reading" role="tabpanel" aria-labelledby="settings-tab-reading" hidden={tab !== 'reading'}>
+      <header class="settings-intro" id="settings-voice"><h3>{t('settings.tab.reading')}</h3><p>{t('settings.readingHint')}</p></header>
       <div class="field">
         <span class="field-label">{t('settings.voice')}</span>
         {voices.length === 0 ? (
           <p class="empty">{t('settings.voiceNone')}</p>
         ) : (
+          <>
+          <div class="selected-voice"><div><strong>{current?.name ?? t('settings.voiceNone')}</strong><span>{current?.lang} · {current?.provider ? t('settings.voiceServer') : current?.localService ? t('settings.voiceLocal') : t('settings.voiceOnline')}</span></div>
+            {current ? <button type="button" class="icon-btn" aria-label={t('settings.voicePreview')} onClick={() => preview(current)}><IconSpeaker size={19} /></button> : null}
+          </div>
+          <details class="settings-fold voice-picker"><summary>{t('settings.chooseVoice')}<span class="fold-meta">{voices.length}</span></summary><div class="fold-body">
+          <input type="search" aria-label={t('settings.searchVoice')} placeholder={t('settings.searchVoice')} value={voiceSearch} onInput={(e) => setVoiceSearch(e.currentTarget.value)} />
           <ul class="voice-list" role="radiogroup" aria-label={t('settings.voice')}>
-            {voices.map((v) => (
+            {voices.filter((v) => `${v.name} ${v.lang} ${v.provider ?? ''}`.toLowerCase().includes(voiceSearch.toLowerCase())).map((v) => (
               <li key={v.voiceURI} class={matching.has(v.voiceURI) ? 'is-matching' : undefined}>
                 <button type="button" role="radio" aria-checked={current?.voiceURI === v.voiceURI} class="voice" onClick={() => session.setVoice(v)}>
                   <span class="voice-name">{v.name}</span>
@@ -142,8 +184,11 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
               </li>
             ))}
           </ul>
+          </div></details>
+          </>
         )}
       </div>
+      <VolumeSlider id="settings-volume" />
       <div class="field">
         <label class="field-label" for="slider-tempo">
           {t('settings.tempo')}
@@ -151,6 +196,7 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
         </label>
         <input id="slider-tempo" type="range" min={LIMITS.tempo.min} max={LIMITS.tempo.max} step={LIMITS.tempo.step} value={s.tempo} onInput={(e) => setTempo(session, Number(e.currentTarget.value))} />
       </div>
+      <details class="settings-fold"><summary>{t('settings.footnotes')}</summary><div class="fold-body">
       <div class="field">
         <span class="field-label" id="fn-label">
           {t('settings.footnotes')}
@@ -172,9 +218,21 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
           ))}
         </div>
       </div>
+      </div></details>
 
+      </section>
+
+      <section id="settings-panel-stage" role="tabpanel" aria-labelledby="settings-tab-stage" hidden={tab !== 'stage'}>
+        <StageSettings session={session} />
+      </section>
+
+      <section id="settings-panel-ai" role="tabpanel" aria-labelledby="settings-tab-ai" hidden={tab !== 'ai'}>
       <AiSettings session={session} />
+      </section>
 
+      <section id="settings-panel-storage" role="tabpanel" aria-labelledby="settings-tab-storage" hidden={tab !== 'storage'}>
+      {tab === 'storage' ? <StorageSettings session={session} /> : null}
+      <details class="settings-fold"><summary>{t('settings.general')}</summary><div class="fold-body">
       <h3 class="settings-group">{t('settings.language')}</h3>
       <Segmented field="uiLanguage" label="settings.language" options={['auto', 'de', 'en']} />
 
@@ -185,10 +243,15 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
           settings.value = session.env.settings.reset();
           session.engine.setTempo(settings.value.tempo);
           session.engine.setFootnoteMode(settings.value.footnoteMode);
+          void session.refreshVoices();
         }}
       >
         {t('settings.reset')}
       </button>
+      </div></details>
+      </section>
+      </div>
+      </div>
     </Drawer>
   );
 }

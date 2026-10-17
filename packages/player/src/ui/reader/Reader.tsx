@@ -7,20 +7,21 @@ import { focusKind, mapKey, type Action } from '../../input/keymap.ts';
 import { nextParagraph, nextSection, nextSentence, prevParagraph, prevSection, prevSentence } from '../../nav/navigation.ts';
 import { TEMPO_STEP } from '../../engine/engine.ts';
 import type { Settings } from '../../settings/settings.ts';
-import { IconBack, IconBookmark, IconCinema, IconFocus, IconHelp, IconPage, IconSentence, IconSettings, IconStage, IconSubtitles, IconToc } from '../icons.tsx';
+import { IconBack, IconBookmark, IconCinema, IconFocus, IconHelp, IconPage, IconRsvp, IconSentence, IconSettings, IconStage, IconSubtitles, IconToc } from '../icons.tsx';
 import { AiIndicator } from './AiIndicator.tsx';
-import { Controls, setTempo } from './Controls.tsx';
+import { Controls, setTempo, setWpm, WPM_STEP } from './Controls.tsx';
 import { Notices } from './Notices.tsx';
 import { BookmarksPanel, FootnotePopover, HelpPanel, TocPanel } from './Panels.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
 import { StagePanel } from './StagePanel.tsx';
-import { SentenceView } from './Subtitles.tsx';
+import { RsvpView, SentenceView } from './Subtitles.tsx';
 import { TextPane } from './TextPane.tsx';
 
 const LAYOUTS: Array<{ id: Settings['layout']; icon: typeof IconStage; label: MessageKey }> = [
   { id: 'stage', icon: IconStage, label: 'reader.layout.stage' },
   { id: 'cinema', icon: IconCinema, label: 'reader.layout.cinema' },
   { id: 'sentence', icon: IconSentence, label: 'reader.layout.sentence' },
+  { id: 'rsvp', icon: IconRsvp, label: 'reader.layout.rsvp' },
   { id: 'page', icon: IconPage, label: 'reader.layout.page' },
   { id: 'focus', icon: IconFocus, label: 'reader.layout.focus' },
 ];
@@ -33,7 +34,7 @@ export function dispatch(session: ReaderSession, action: Action): boolean {
   const p = session.engine.position.value;
   switch (action) {
     case 'toggle-play':
-      if (session.engine.silent) return false;
+      if (session.engine.silent && !session.pacerMode) return false;
       session.togglePlay();
       return true;
     case 'prev-sentence':
@@ -55,10 +56,12 @@ export function dispatch(session: ReaderSession, action: Action): boolean {
       session.navigate(nextParagraph(tl, p));
       return true;
     case 'tempo-down':
-      setTempo(session, settings.value.tempo - TEMPO_STEP);
+      if (session.pacerMode) setWpm(settings.value.rsvpWpm - WPM_STEP);
+      else setTempo(session, settings.value.tempo - TEMPO_STEP);
       return true;
     case 'tempo-up':
-      setTempo(session, settings.value.tempo + TEMPO_STEP);
+      if (session.pacerMode) setWpm(settings.value.rsvpWpm + WPM_STEP);
+      else setTempo(session, settings.value.tempo + TEMPO_STEP);
       return true;
     case 'cycle-visual': {
       const mode = session.cycleVisual();
@@ -176,15 +179,11 @@ export function Reader({ session }: { session: ReaderSession }) {
           <span class="topbar-book">{session.book.title}</span>
           {chapter?.title && chapter.title !== session.book.title ? <span class="topbar-chapter">{chapter.title}</span> : null}
         </div>
+        <AiIndicator session={session} />
         <div class="topbar-actions">
-          <AiIndicator onOpen={() => (session.panel.value = 'settings')} />
-          <div class="segmented compact" role="radiogroup" aria-label={t('reader.layout')}>
-            {LAYOUTS.map(({ id, icon: Icon, label }) => (
-              <button key={id} type="button" role="radio" aria-checked={layout === id} aria-label={t(label)} title={t(label)} onClick={() => (settings.value = { ...settings.value, layout: id })}>
-                <Icon size={18} />
-              </button>
-            ))}
-          </div>
+          <select class="layout-picker hide-narrow" aria-label={t('reader.layout')} value={layout} onChange={(e) => (settings.value = { ...settings.value, layout: e.currentTarget.value as Settings['layout'] })}>
+            {LAYOUTS.map(({ id, label }) => <option key={id} value={id}>{t(label)}</option>)}
+          </select>
           {layout === 'stage' ? (
             <button
               type="button"
@@ -217,6 +216,7 @@ export function Reader({ session }: { session: ReaderSession }) {
       <main class="reader-main">
         {layout === 'stage' || layout === 'cinema' ? <StagePanel session={session} subtitles={layout === 'cinema' || settings.value.subtitles} /> : null}
         {layout === 'sentence' ? <SentenceView session={session} /> : null}
+        {layout === 'rsvp' ? <RsvpView session={session} variant="view" /> : null}
         {layout === 'stage' || layout === 'page' || layout === 'focus' ? <TextPane session={session} /> : null}
       </main>
 

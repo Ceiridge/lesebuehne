@@ -4,8 +4,10 @@ import {
   budgetAfter,
   planCacheKey,
   planSectionLLM,
+  planUserPrompt,
   planSectionOrHeuristic,
   prepareBook,
+  preferBudget,
   verbatimIn,
   type Complete,
   type LlmPlan,
@@ -62,6 +64,31 @@ const diagram: NonNullable<LlmPlan['diagram']> = {
 };
 
 describe('T4: LLM director', () => {
+  test('picture preference reaches the prompt and rejects non-image answers only while budget remains', async () => {
+    const ctx = { prefer: 'images' as const, budget: { images: 1, animations: 0 } };
+    expect(planUserPrompt(section, book, ctx)).toContain('The reader selected pictures');
+    let problems: string[] = [];
+    const complete: Complete = async (req) => {
+      const answer = basePlan({ diagram });
+      problems = req.validate?.(answer as never) ?? [];
+      return { value: answer as never, providerId: 'fake' };
+    };
+    await planSectionLLM(section, book, ctx, complete, signal);
+    expect(problems.some((p) => p.includes('selected pictures'))).toBe(true);
+    await planSectionLLM(section, book, { ...ctx, budget: { images: 0, animations: 0 } }, complete, signal);
+    expect(problems).toEqual([]);
+  });
+
+  test('visual preferences transfer budgets and separate caches; mixed keeps the existing key', () => {
+    const budget = { images: 2, animations: 3 };
+    expect(preferBudget(budget, undefined)).toEqual(budget);
+    expect(preferBudget(budget, 'images')).toEqual({ images: 5, animations: 0 });
+    expect(preferBudget(budget, 'animations')).toEqual({ images: 0, animations: 5 });
+    const mixed = planCacheKey(section, book, undefined, 'a');
+    expect(planCacheKey(section, book, undefined, 'a', undefined)).toBe(mixed);
+    expect(new Set([mixed, ...(['images', 'animations'] as const).map((p) => planCacheKey(section, book, undefined, 'a', p))]).size).toBe(3);
+  });
+
   test('verbatimIn: exact, case- and whitespace-tolerant, else undefined', () => {
     expect(verbatimIn('Habe  Mut, dich', 'habe mut')).toBe('Habe  Mut');
     expect(verbatimIn('Habe Mut', 'Mut')).toBe('Mut');

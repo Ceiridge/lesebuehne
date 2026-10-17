@@ -1,6 +1,7 @@
 import { tokenTime, type Book, type Sentence, type Timeline } from '@lesebuehne/core';
 import { signal, type Signal } from '@preact/signals';
 import { BoundaryDetector, Calibration, WordEstimator } from './estimator.ts';
+import { isTtsVoice } from './audio-port.ts';
 import { footnoteLookup, sectionEndItems, sentenceItems, type FootnoteLookup, type FootnoteMode, type QueueItem } from './queue.ts';
 import type { SpeechPort } from './speech-port.ts';
 import { realTimers, type Timers, type VoiceInfo } from './voices.ts';
@@ -37,6 +38,7 @@ export interface EngineOptions {
   port?: SpeechPort | undefined;
   voice?: VoiceInfo | undefined;
   tempo?: number;
+  volume?: number;
   footnoteMode?: FootnoteMode;
   timers?: Timers;
   calibration?: Calibration;
@@ -56,13 +58,18 @@ export class PlayerEngine {
   readonly speakingFootnote = signal<string | null>(null);
   /** The word highlight is estimated (voice without word boundaries, Q4). */
   readonly estimated = signal(false);
-  readonly silent: boolean;
+  get silent(): boolean { return !this.port || !this.voice; }
 
   private readonly book: Book;
   private readonly timeline: Timeline;
   private readonly port: SpeechPort | undefined;
-  private voice: VoiceInfo | undefined;
-  private tempo: number;
+  private readonly voiceValue = signal<VoiceInfo | undefined>(undefined);
+  private get voice(): VoiceInfo | undefined { return this.voiceValue.value; }
+  private set voice(value: VoiceInfo | undefined) { this.voiceValue.value = value; }
+  private readonly tempoValue = signal(1);
+  private get tempo(): number { return this.tempoValue.value; }
+  private set tempo(value: number) { this.tempoValue.value = value; }
+  private volume: number;
   private footnoteMode: FootnoteMode;
   private readonly timers: Timers;
   private readonly calibration: Calibration;
@@ -84,8 +91,8 @@ export class PlayerEngine {
     this.timeline = o.timeline;
     this.port = o.port;
     this.voice = o.voice;
-    this.silent = !o.port || !o.voice;
     this.tempo = clampTempo(o.tempo ?? 1);
+    this.volume = o.volume ?? 1;
     this.footnoteMode = o.footnoteMode ?? 'skip';
     this.timers = o.timers ?? realTimers;
     this.calibration = o.calibration ?? new Calibration();
@@ -146,10 +153,16 @@ export class PlayerEngine {
     if (this.playing.value) this.speakFrom(this.position.value);
   }
 
-  setVoice(v: VoiceInfo): void {
+  setVoice(v: VoiceInfo | undefined): void {
     this.voice = v;
-    this.estimated.value = this.detector.hint(v.voiceURI);
+    this.estimated.value = v ? this.detector.hint(v.voiceURI) : false;
+    if (!v) { this.pause(); return; }
     if (this.playing.value) this.speakFrom(this.position.value);
+  }
+
+  setVolume(volume: number): void {
+    this.volume = Math.min(1, Math.max(0, volume));
+    this.port?.setVolume?.(this.volume);
   }
 
   setFootnoteMode(m: FootnoteMode): void {
@@ -178,7 +191,7 @@ export class PlayerEngine {
     const entry = this.timeline.entries[p.entryIndex];
     if (!entry) return;
     this.setPosition(p);
-    this.items = sentenceItems(p.entryIndex, entry, p.tokenIndex, this.footnoteMode, this.footnotes, this.book.language);
+    this.items = sentenceItems(p.entryIndex, entry, p.tokenIndex, this.footnoteMode, this.footnotes, this.book.language, isTtsVoice(this.voice?.voiceURI));
     this.next();
   }
 
@@ -244,6 +257,8 @@ export class PlayerEngine {
       lang: this.book.language,
       ...(this.voice ? { voiceURI: this.voice.voiceURI } : {}),
       rate: this.tempo,
+      volume: this.volume,
+      ...(item.kind === 'sentence' && item.startOffset ? { startOffset: item.startOffset } : {}),
       onStart: () => {
         if (!live()) return;
         this.armWatchdog(item, g);
@@ -281,8 +296,9 @@ export class PlayerEngine {
     }
     this.chunkStartedAt = now;
     const cps = this.calibration.cps(this.voice?.voiceURI ?? '', this.tempo, this.book.language);
-    this.estimator = new WordEstimator(sentence, item.offset, cps);
-    this.setPosition({ entryIndex: item.entryIndex, tokenIndex: tokenAtSpeechOffset(sentence, item.offset) });
+    const offset = item.offset + (item.startOffset ?? 0);
+    this.estimator = new WordEstimator(sentence, offset, cps);
+    this.setPosition({ entryIndex: item.entryIndex, tokenIndex: tokenAtSpeechOffset(sentence, offset) });
   }
 
   private onWord(item: QueueItem, charIndex: number): void {

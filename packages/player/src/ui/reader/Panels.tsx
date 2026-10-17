@@ -15,7 +15,16 @@ export function Drawer({ title, onClose, children, wide }: { title: string; onCl
   }, []);
   return (
     <div class="drawer-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div ref={panel} class={wide ? 'drawer is-wide' : 'drawer'} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={panel} class={wide ? 'drawer is-wide' : 'drawer'} role="dialog" aria-modal="true" aria-label={title}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
+          if (e.key !== 'Tab') return;
+          const focusable = [...(panel.current?.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), summary, [tabindex="0"]') ?? [])]
+            .filter((el) => el.getClientRects().length > 0);
+          const first = focusable[0], last = focusable.at(-1);
+          if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+        }}>
         <header class="drawer-header">
           <h2>{title}</h2>
           <button type="button" class="icon-btn" aria-label={t('reader.close')} onClick={onClose}>

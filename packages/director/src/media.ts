@@ -21,12 +21,15 @@ import {
   type TTSProvider,
   type VisualPlan,
   type WordTiming,
+  type CacheUsage,
 } from '@lesebuehne/core';
 
 /** Stored bytes by name (`<key>-<n>.png`, `<key>.wav` …). */
 export interface MediaStore {
   get(name: string): Promise<Uint8Array | undefined>;
   put(name: string, bytes: Uint8Array): Promise<void>;
+  stats?(prefix: string): Promise<CacheUsage>;
+  clear?(prefix: string): Promise<void>;
 }
 
 /** One image variant: the stored file name and its type. */
@@ -108,7 +111,8 @@ export class ImageDirector {
           signal,
         );
         const before = await this.o.cache.get<ImageVariant>(key);
-        const file = `${key}-${before?.variants.length ?? 0}.${extension(r.value.mime)}`;
+        // URLs are immutable. A cache clear must not reuse a browser-cached image URL.
+        const file = `${key}-${before?.variants.length ?? 0}-${crypto.randomUUID().slice(0, 8)}.${extension(r.value.mime)}`;
         await this.o.store.put(file, r.value.image);
         const next = addVariant(before, { file, mime: r.value.mime }, r.providerId, r.value.model);
         await this.o.cache.put(key, next);

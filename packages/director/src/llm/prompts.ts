@@ -1,5 +1,5 @@
 /** Prompt versions are part of every cache key: change them when prompts change. */
-export const PLAN_PROMPT_VERSION = 'llm-plan-4';
+export const PLAN_PROMPT_VERSION = 'llm-plan-6';
 export const STYLE_PROMPT_VERSION = 'llm-style-1';
 
 const DATA_RULE =
@@ -22,8 +22,10 @@ export const PLAN_SYSTEM = [
   'You are the director of an explanatory stage that accompanies a non-fiction book being read aloud word for word.',
   DATA_RULE,
   'For ONE section choose the single visual that best explains its thought (Mayer: coherence, signalling, segmenting). Rules:',
+  'An explicit reader preference in the context takes precedence over these default mode choices, within the remaining budget.',
   '- structure in the text (enumeration, contrast, scale/poles, causal chain, process, cycle, hierarchy, comparison, timeline, matrix) → mode "diagram" with a fitting template; items get short labels (your words, at most 60 characters);',
-  '- a structure that needs motion to be understood (a transformation, a flow, a pendulum, a spiral) → mode "animation" with a precise brief AND a diagram as its fallback;',
+  '- a structure that needs motion to be understood (a concrete transformation, transfer, growth or cause and effect) → mode "animation" with a precise brief AND a simple diagram as its fallback. Do not animate an abstract claim merely by moving labelled boxes. If motion adds no explanatory value, choose a static mode.',
+  'Animation brief: explain ONE relationship in at most three beats: initial state, visible action, result. Name the concrete objects, what changes and why that change explains the text. Use at most three short labels (1–3 words, 32 characters each), no title, captions, paragraphs, legends or duplicate labels. Show the meaning through position, shape, quantity and a clear direction, not through reading text. Its fallback diagram has at most three items, short labels and no detail text.',
   '- a concrete scene or anecdote (historical example, place, person) → mode "image" with a prompt that follows the Style Bible, an aspect ratio and named focus regions (normalised rectangles);',
   '- a central thesis or memorable maxim → mode "quote" with the exact sentence alias and the phrase copied verbatim (8–240 characters);',
   '- transition, reflection or repetition → mode "kinetic" (key terms only) or "none". No picture is better than an arbitrary picture.',

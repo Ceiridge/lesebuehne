@@ -11,6 +11,7 @@ export const LIMITS = {
   margins: { min: 0, max: 96, step: 4 },
   paragraphSpacing: { min: 0, max: 2, step: 0.1 },
   tempo: { min: MIN_TEMPO, max: MAX_TEMPO, step: TEMPO_STEP },
+  rsvpWpm: { min: 150, max: 900, step: 25 },
 } as const;
 
 const num = (min: number, max: number, fallback: number) => z.number().min(min).max(max).catch(fallback);
@@ -29,6 +30,7 @@ export function settingsSchema(reducedMotion: boolean) {
     highlightStyle: z.enum(['background', 'underline']).catch('background'),
     dimming: z.enum(['off', 'light', 'strong']).catch('light'),
     motion: z.enum(['full', 'reduced', 'none']).catch(reducedMotion ? 'reduced' : 'full'),
+    volume: num(0, 1, 1),
     tempo: z
       .number()
       .min(MIN_TEMPO)
@@ -39,9 +41,17 @@ export function settingsSchema(reducedMotion: boolean) {
     voiceByLang: z.record(z.string(), z.string()).catch({}),
     footnoteMode: z.enum(['skip', 'inline', 'section-end']).catch('skip'),
     uiLanguage: z.enum(['auto', 'de', 'en']).catch('auto'),
-    layout: z.enum(['stage', 'cinema', 'sentence', 'page', 'focus']).catch('stage'),
+    layout: z.enum(['stage', 'cinema', 'sentence', 'rsvp', 'page', 'focus']).catch('stage'),
     /** Subtitles at the bottom of the stage in the stage layout (always on in "cinema"). */
     subtitles: z.boolean().catch(false),
+    /** Subtitles as the karaoke line or as one RSVP word (spec 007 B1). */
+    subtitleStyle: z.enum(['line', 'word']).catch('line'),
+    /** RSVP pace without a voice (words per minute). */
+    rsvpWpm: z.number().int().min(150).max(900).refine((n) => n % 25 === 0).catch(350),
+    /** RSVP layout: advance at rsvpWpm even when a voice is available. */
+    rsvpSilent: z.boolean().catch(false),
+    /** AI visuals: director decides, only pictures, or only animations (spec 007 B2). */
+    visualKinds: z.enum(['mixed', 'images', 'animations']).catch('mixed'),
     /** Voices whose "word highlight estimated" hint was dismissed. */
     dismissedHints: z.array(z.string()).catch([]),
   });

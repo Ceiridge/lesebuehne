@@ -53,6 +53,63 @@ Open the printed URL (`http://127.0.0.1:3000/`), click the Kant sample
   <kbd>?</kbd> help · <kbd>Esc</kbd> close.
 - The interface is available in German and English.
 
+### Settings and storage
+
+Settings has five task groups:
+
+- **Adjust narration:** voice, speed and volume.
+- **Make text readable:** fonts, colors and highlighting.
+- **Set up the stage:** layout, pictures, animation and subtitles.
+- **Connect AI:** providers, models and connection settings.
+- **Manage storage & app:** caches, language and reset controls.
+
+Reading and appearance changes apply at once. Voice search and advanced controls open on demand.
+The speaker button beside the playback controls opens the volume slider.
+
+The header shows separate speech and stage status. Each status includes the selected voice or visual preference.
+The status buttons open the matching task group. Provider details appear under **Connect AI**.
+Provider edits stay in a draft until you choose **Save & connect**.
+Connection selection offers automatic detection, server only, or browser only.
+Automatic detection prefers the server. Browser provider settings are then a fallback.
+
+Storage shows the generated cache size for the active connection across all books.
+The stage cache contains plans, pictures, animations and book styles.
+The speech cache contains generated audio and word timings.
+Clearing either cache preserves books, reading positions, bookmarks and settings.
+
+- **Stage cache:** clearing pauses AI planning. Choose **Restart AI planning** to create new visuals.
+- **Speech cache:** clearing pauses speech. Press Play to fill the audio buffer again.
+
+Changing connections also changes the cache location shown in Storage.
+
+### Word-by-word reading (RSVP)
+
+RSVP shows one word at a time. A red focus letter stays on a fixed axis.
+
+1. Choose **Word by word (RSVP)** in the view selector or **Set up the stage**.
+2. For silent reading, enable the RSVP no-sound option under **Set up the stage**.
+3. Set the pace from 150 to 900 words per minute.
+4. Press <kbd>Space</kbd> to start or pause.
+
+Long words and punctuation add brief pauses. With speech enabled, the word follows the voice.
+The subtitle setting also offers **Single word (RSVP)** for the stage and cinema views.
+RSVP preserves signs, currency symbols and standalone operators.
+Silent RSVP does not generate speech or show a speech-based remaining-time estimate.
+
+Under **Set up the stage**, choose mixed visuals, images only, or animations only.
+This choice applies to new AI plans. Diagrams and text visuals remain available.
+Stage generation pauses in layouts without a stage. When you return, finished visuals remain available.
+
+### Generation progress
+
+The timeline and text margins show separate stage and speech tracks.
+Stage colors identify pictures, animations, diagrams, quotes, key terms and book figures.
+The legend names the visible types. Filled sections are ready. Dashed sections are working. Faint sections are queued.
+
+The rate below the tracks compares generation with the current reading speed.
+A value of 1× matches that speed. The average uses up to 24 completed generations and excludes full cache hits.
+Stage estimates include planning and media generation. After four audio clips, the stage estimate adjusts to the selected voice.
+
 ## Server voices (optional)
 
 Besides the browser's voices the player can read with server-side TTS: a local
@@ -62,14 +119,28 @@ English among others), OpenAI's speech endpoint, or any OpenAI-compatible `/v1/a
 - Configure it in `lesebuehne.config.local.ts`, e.g.
   `tts: [{ id: 'qwentts', kind: 'qwentts', baseURL: 'http://127.0.0.1:8080/v1', voices: ['vivian'] }]`,
   or with `TTS_BASE_URL`, `TTS_VOICES` (comma-separated) and `TTS_KIND` (`qwentts`, `openai`,
-  `openai-compatible`; plus `TTS_API_KEY`, `TTS_MODEL`).
-- Server voices appear in Settings → Voice (marked "server voice") and are preferred when you have
-  not chosen a voice. Audio is synthesized sentence by sentence about a minute ahead and cached
-  on disk; the chip next to the remaining time shows whether audio is ready.
+  `openai-compatible`; plus `TTS_API_KEY`, `TTS_MODEL`, `TTS_CONCURRENCY`).
+- Qwen3-TTS can process requests in batches. Match `concurrency` or `TTS_CONCURRENCY` to the server's `--max-batch` setting.
+  Four requests can improve throughput on a compatible GPU. The generation-rate indicator shows whether the provider keeps up.
+- Server voices appear under **Adjust narration**. If you have not chosen a voice, the player prefers a server voice.
+  The player requests up to two minutes of speech ahead. It limits the window to 120 chunks.
+  The server caches audio on disk. The chip beside the remaining time shows the ready audio buffer.
 - These engines report no word times, so the player aligns each sentence itself (speech
   start/end and pauses from the audio, matched to punctuation, syllable-weighted in between).
   Tempo keeps the pitch.
 - If the server voice fails, the sentence is read by a browser voice instead and the chip says so.
+
+Generated speech uses fixed chunks. Pause, word jumps and tempo changes reuse cached chunks at the requested word.
+The player reads each provider's parallel-request limit from its status.
+List each reference voice with its supported book languages:
+
+```ts
+{ id: 'narrator-m60-s99', name: 'S99 Deutsch', languages: ['de'] },
+{ id: 'narrator-m60-s99-en', name: 'S99 English', languages: ['en'] },
+```
+
+This example needs both reference voices registered with QwenTTS.
+QwenTTS receives the book language with each speech request. Reference files and local voice settings are not part of this repository.
 
 ## AI director (optional)
 
@@ -101,14 +172,14 @@ glossary of central concepts with glyphs and colours that the stage uses consist
 - Every phrase the director anchors to is checked against the book text. Anything not verbatim is
   dropped; the text itself is never changed.
 - Status: the small indicator in the top bar (heuristic / AI / working / limited). Details,
-  providers and usage: Settings → AI director.
+  providers and usage: Settings → Connect AI.
 
 ### Where the AI runs
 
 1. **Local server** (recommended): `bun run dev` (development) or `bun run build && bun run server`
    (local full mode) serve the player and the API on `127.0.0.1`. Keys and tokens stay on the
    server. `bun run doctor` lists every provider and why it is or is not available.
-2. **Browser only** (static hosting): Settings → AI director → own keys for OpenRouter, an
+2. **Browser only** (static hosting): Settings → Connect AI → own keys for OpenRouter, an
    OpenAI-compatible or an Anthropic-compatible endpoint for plans and animations; an OpenRouter
    image model or an OpenAI-compatible images endpoint for illustrations; an OpenAI-compatible
    speech endpoint for voices. Keys are stored only in that browser's localStorage, requests go
@@ -179,17 +250,18 @@ are self-hosted; the player contacts third-party servers only for the AI provide
   browser's storage. A new version is announced with a short notice. The worker never caches API
   or provider requests. It runs only on `https:` or loopback.
 - **What works without a server:** reading, highlighting, browser voices, import, library, the
-  heuristic director with diagrams. With own keys (Settings → AI director → "In this browser"):
+  heuristic director with diagrams. With own keys (Settings → Connect AI → "In this browser"):
   LLM plans, Style Bible, animations, illustrations and AI voices. Only the ChatGPT subscription
   routes (`codex-auth`, `chatgpt-plan`, `image-use`) need the local server, because their
   tokens must not reach a browser. The start page says so on first use.
 - **Hosted page with a local server:** start the server with the page's origin allowed, e.g.
   `LESEBUEHNE_ORIGINS=https://name.github.io bun run server` (or `server.origins` in the
-  config), and enter `http://127.0.0.1:8787` under Settings → AI director → Server address. The
+  config), and enter `http://127.0.0.1:8787` under Settings → Connect AI → Server address. The
   server answers the browser's Private Network Access checks for allowed origins only;
   `bun run doctor` lists them.
-- **A local qwentts from the browser:** the voice settings can talk to `tts-server` directly
-  when it sends CORS headers; otherwise use it through the local Lesebühne server.
+- **A local qwentts from the browser:** `tts-server` sends CORS headers, so the voice settings
+  can talk to it directly (preset qwentts, base URL `http://127.0.0.1:8080/v1`, parallel requests
+  as its `--max-batch`).
 - Open the player over HTTP. `file://` (double-click on `index.html`) is not supported.
 - The servers bind only to `127.0.0.1`. The AI API accepts only loopback hosts and the same
   origin (plus the allowed origins above).

@@ -150,6 +150,20 @@ describe('HTTP helpers', () => {
 });
 
 describe('B6: cache and job queue', () => {
+  test('cancel and immediately revisit a running key creates fresh work without losing the concurrency bound', async () => {
+    const q = new JobQueue(1);
+    let release!: () => void;
+    const old = q.enqueue({ key: 'same', priority: 0, run: () => new Promise<void>((r) => { release = r; }) });
+    await Promise.resolve();
+    q.cancel('same');
+    let started = false;
+    const fresh = q.enqueue({ key: 'same', priority: -1, run: async () => { started = true; return 'fresh'; } });
+    await expect(old).rejects.toThrow();
+    expect(started).toBe(false);
+    release();
+    expect(await fresh).toBe('fresh');
+  });
+
   test('cache keys are stable and order-independent; variants and selection', async () => {
     expect(cacheKey('plan', { a: '1', b: 2 })).toBe(cacheKey('plan', { b: 2, a: '1' }));
     expect(cacheKey('plan', { a: '1' })).not.toBe(cacheKey('plan', { a: '2' }));

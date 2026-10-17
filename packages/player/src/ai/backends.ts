@@ -1,4 +1,4 @@
-import { MemoryCache, ProviderRegistry, type Book, type ImageProvider, type LLMProvider, type ProviderStats, type ResultCache, type TTSProvider, type TTSVoice, type VisualPlan, type WordTiming } from '@lesebuehne/core';
+import { MemoryCache, ProviderRegistry, TaskGroup, type CacheScope, type CacheStats, type Book, type ImageProvider, type LLMProvider, type ProviderStats, type ResultCache, type TTSProvider, type TTSVoice, type VisualPlan, type WordTiming } from '@lesebuehne/core';
 import {
   DEFAULT_BUDGET,
   DirectorService,
@@ -36,10 +36,12 @@ export interface ProviderStatus {
   kind?: string;
   /** TTS providers: their voices. */
   voices?: TTSVoice[];
+  concurrency?: number;
   usage?: ProviderStats | undefined;
 }
 
 export interface ImageResult {
+  cached?: boolean;
   /** Absolute URL of the picture. */
   url: string;
   providerId: string;
@@ -66,9 +68,11 @@ export interface AiBackend {
   /** Server images (spec 005): an illustration for an `image` plan (slow: minutes). */
   image?(book: Book, sectionId: string, plan: VisualPlan, opts: { regenerate?: boolean; select?: number }, signal: AbortSignal): Promise<ImageResult>;
   /** Server TTS (spec 004): WAV audio and aligned word timings for one utterance. */
-  tts?(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[] }>;
+  tts?(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }>;
   /** Starts an own sign-in on the server; returns the URL to open. */
   login?(providerId: string): Promise<string>;
+  cacheStats?(): Promise<CacheStats>;
+  clearCache?(scope: CacheScope): Promise<void>;
 }
 
 class HttpError extends Error {
@@ -161,7 +165,7 @@ export class ServerBackend implements AiBackend {
     return { ...r, url: this.url(r.url) };
   }
 
-  async tts(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[] }> {
+  async tts(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }> {
     const res = await this.http(this.url('api/tts'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -170,11 +174,19 @@ export class ServerBackend implements AiBackend {
     });
     if (!res.ok) await readJson(res);
     const words = JSON.parse(decodeURIComponent(res.headers.get('x-lb-words') ?? '%5B%5D')) as WordTiming[];
-    return { audio: await res.blob(), words };
+    const cached = res.headers.get('x-lb-cached');
+    return { audio: await res.blob(), words, ...(cached === 'true' || cached === 'false' ? { cached: cached === 'true' } : {}) };
   }
 
   async login(providerId: string): Promise<string> {
     return (await this.post<{ url: string }>(`api/auth/${encodeURIComponent(providerId)}/login`, {})).url;
+  }
+
+  cacheStats(): Promise<CacheStats> {
+    return this.http(this.url('api/cache')).then((r) => readJson<CacheStats>(r));
+  }
+  async clearCache(scope: CacheScope): Promise<void> {
+    await this.post('api/cache/clear', { scope });
   }
 }
 
@@ -225,7 +237,7 @@ export function browserMedia(prefs: AiPrefs, http: Http): BrowserMedia {
     if (v.preset === 'openai') {
       if (v.apiKey) out.tts = openaiTTS({ id: 'openai-tts', apiKey: v.apiKey, ...(v.model ? { model: v.model } : {}), ...(voices.length ? { voices } : {}), fetch });
     } else if (v.preset === 'qwentts') {
-      if (voices.length) out.tts = qwentts({ id: 'qwentts', ...(v.baseURL ? { baseURL: v.baseURL } : {}), voices, fetch });
+      if (voices.length) out.tts = qwentts({ id: 'qwentts', ...(v.baseURL ? { baseURL: v.baseURL } : {}), voices, concurrency: v.parallel, fetch });
     } else if (v.baseURL && voices.length) {
       out.tts = new OpenAICompatibleTTS({
         id: 'browser-tts',
@@ -234,6 +246,7 @@ export function browserMedia(prefs: AiPrefs, http: Http): BrowserMedia {
         voices: voices.map((id) => ({ id, name: id, languages: [] })),
         ...(v.apiKey ? { apiKey: v.apiKey, requiresKey: true } : {}),
         ...(v.model ? { model: v.model } : {}),
+        concurrency: v.parallel,
         runsIn: ['browser'],
         fetch,
       });
@@ -253,23 +266,26 @@ export class BrowserBackend implements AiBackend {
   private readonly chain: string[];
   /** Object URLs of stored pictures, one per file. */
   private readonly urls = new Map<string, string>();
+  private readonly tasks = { stage: new TaskGroup(), speech: new TaskGroup() };
+  private readonly store: MediaStore;
 
   constructor(
     providers: LLMProvider[],
-    cache: ResultCache = new MemoryCache(),
+    private readonly cache: ResultCache = new MemoryCache(),
     media: BrowserMedia & { store?: MediaStore; objectUrl?: (b: Blob) => string } = {},
   ) {
     for (const p of providers) this.registry.register(p);
     this.chain = providers.map((p) => p.id);
     this.plans = providers.length > 0;
-    this.service = new DirectorService({ complete: registryComplete(this.registry, this.chain), cache, chainId: `browser:${this.chain.join(',')}` });
+    this.service = new DirectorService({ complete: registryComplete(this.registry, this.chain), cache, chainId: `browser:${this.chain.join(',')}`, imagesAvailable: !!media.image });
     const store = media.store ?? new MemoryMediaStore();
+    this.store = store;
     const objectUrl = media.objectUrl ?? ((b: Blob) => URL.createObjectURL(b));
     if (media.image) {
       this.registry.register(media.image);
       const images = new ImageDirector({ registry: this.registry, chain: [media.image.id], cache, store, styleReference: true, styleBible: (b) => this.service.styleBible(b) });
-      this.image = async (book, sectionId, plan, opts, signal) => {
-        const r = await images.generate(book, sectionId, plan, opts, signal);
+      this.image = (book, sectionId, plan, opts, signal) => this.tasks.stage.run(signal, async (s) => {
+        const r = await images.generate(book, sectionId, plan, opts, s);
         let url = this.urls.get(r.file);
         if (!url) {
           const bytes = await store.get(r.file);
@@ -277,29 +293,49 @@ export class BrowserBackend implements AiBackend {
           url = objectUrl(new Blob([bytes as BlobPart], { type: r.mime }));
           this.urls.set(r.file, url);
         }
-        return { url, providerId: r.providerId, variants: r.variants, selected: r.selected };
-      };
+        return { url, providerId: r.providerId, variants: r.variants, selected: r.selected, cached: r.cached };
+      });
     }
     if (media.tts) {
       this.registry.register(media.tts);
       const speech = new SpeechDirector(this.registry, store);
-      this.tts = async (text, lang, voice, signal) => {
-        const r = await speech.speak(text, lang, voice, signal);
-        return { audio: new Blob([r.audio as BlobPart], { type: 'audio/wav' }), words: r.words };
-      };
+      this.tts = (text, lang, voice, signal) => this.tasks.speech.run(signal, async (s) => {
+        const r = await speech.speak(text, lang, voice, s);
+        return { audio: new Blob([r.audio as BlobPart], { type: 'audio/wav' }), words: r.words, cached: r.cached };
+      });
     }
   }
 
   prepare(book: Book, opts: VariantOptions, signal: AbortSignal): Promise<StyleResponse> {
-    return this.service.prepare(book, opts, signal);
+    return this.tasks.stage.run(signal, (s) => this.service.prepare(book, opts, s));
   }
 
   plan(book: Book, sectionId: string, opts: PlanOptions, signal: AbortSignal): Promise<PlanResponse> {
-    return this.service.plan(book, sectionId, opts, signal);
+    return this.tasks.stage.run(signal, (s) => this.service.plan(book, sectionId, opts, s));
   }
 
   animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse> {
-    return this.service.animate(book, sectionId, plan, opts, signal);
+    return this.tasks.stage.run(signal, (s) => this.service.animate(book, sectionId, plan, opts, s));
+  }
+
+  async cacheStats(): Promise<CacheStats> {
+    const [results, images, speech] = await Promise.all([this.cache.stats?.(), this.store.stats?.('img-'), this.store.stats?.('tts-')]);
+    return {
+      stage: { entries: (results?.entries ?? 0) + (images?.entries ?? 0), bytes: (results?.bytes ?? 0) + (images?.bytes ?? 0) },
+      speech: speech ?? { entries: 0, bytes: 0 },
+    };
+  }
+
+  async clearCache(scope: CacheScope): Promise<void> {
+    if (!this.store.clear || (scope === 'stage' && !this.cache.clear)) throw new Error('cache maintenance unavailable');
+    await this.tasks[scope].maintain(async () => {
+      if (scope === 'stage') {
+        await this.cache.clear!();
+        await this.store.clear!('img-');
+        for (const url of this.urls.values()) URL.revokeObjectURL(url);
+        this.urls.clear();
+      } else await this.store.clear!('tts-');
+    });
   }
 
   async status(): Promise<BackendStatus> {
@@ -315,7 +351,7 @@ export class BrowserBackend implements AiBackend {
           login: false,
           source: null,
           usage: this.registry.statsOf(p.id),
-          ...(p.kind === 'tts' ? { voices: [...p.voices] } : {}),
+          ...(p.kind === 'tts' ? { voices: [...p.voices], concurrency: p.limits?.concurrency ?? 2 } : {}),
         };
       }),
     );
@@ -341,7 +377,7 @@ export async function detectBackend(o: {
   const own = new URL('/', o.baseURI).href;
   const configured = o.prefs.serverUrl ? [o.prefs.serverUrl.replace(/\/?$/u, '/')] : [];
   const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/)/u.test(own);
-  for (const base of [...new Set(local ? [own, ...configured] : [...configured, own])]) {
+  for (const base of o.prefs.connection === 'browser' ? [] : [...new Set(local ? [own, ...configured] : [...configured, own])]) {
     try {
       const res = await o.http(new URL('api/capabilities', base).href, { signal: AbortSignal.timeout(o.timeoutMs ?? 2500) });
       const body = (await res.json().catch(() => undefined)) as { server?: string } | undefined;
@@ -350,6 +386,7 @@ export async function detectBackend(o: {
       /* no server here */
     }
   }
+  if (o.prefs.connection === 'server') return undefined;
   const providers = browserProviders(o.prefs, o.http);
   const media = browserMedia(o.prefs, o.http);
   if (!providers.length && !media.image && !media.tts) return undefined;

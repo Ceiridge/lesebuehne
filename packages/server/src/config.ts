@@ -21,6 +21,8 @@ export interface TtsConfig {
   format?: 'wav' | 'pcm';
   /** Extra body fields (`seed`, `temperature` …). */
   body?: Record<string, unknown>;
+  /** Parallel requests (qwentts: match the server's `--max-batch`). */
+  concurrency?: number;
 }
 
 export interface ImageConfig {
@@ -156,6 +158,7 @@ export function envOverrides(env: Env): ConfigInput {
         ...(env.TTS_BASE_URL ? { baseURL: env.TTS_BASE_URL } : {}),
         ...(env.TTS_API_KEY ? { apiKey: env.TTS_API_KEY } : {}),
         ...(env.TTS_MODEL ? { model: env.TTS_MODEL } : {}),
+        ...(env.TTS_CONCURRENCY ? { concurrency: Math.max(1, Number(env.TTS_CONCURRENCY) || 1) } : {}),
         voices: (env.TTS_VOICES ?? '').split(',').map((v) => v.trim()).filter(Boolean),
       },
     ];
