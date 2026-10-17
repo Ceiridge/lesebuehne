@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { aiConnecting, aiPrefs, connectAi, updateAiPrefs } from '../../ai/connect.ts';
-import { BROWSER_PROVIDERS, maskKey, type AiPrefs, type BrowserProviderId, type ByokConfig } from '../../ai/prefs.ts';
+import { BROWSER_IMAGE_PROVIDERS, BROWSER_PROVIDERS, BROWSER_VOICE_PRESETS, maskKey, type AiPrefs, type BrowserProviderId, type ByokConfig } from '../../ai/prefs.ts';
 import { aiBackend, aiDetails, aiStatus, refreshDetails } from '../../ai/state.ts';
 import { useEnv } from '../../app/env.ts';
 import type { ReaderSession } from '../../app/session.ts';
@@ -8,6 +8,47 @@ import { toast } from '../../app/store.ts';
 import { t, type MessageKey } from '../../i18n/i18n.ts';
 
 const NEEDS_BASE_URL: ReadonlySet<BrowserProviderId> = new Set(['openai-compatible', 'anthropic-compatible']);
+
+/** Write-only key input: shows a masked hint, saves on blur. */
+function KeyField({ id, value, onChange }: { id: string; value: string; onChange: (key: string) => void }) {
+  const [key, setKey] = useState('');
+  return (
+    <>
+      <label class="field-label small" for={id}>
+        {t('ai.apiKey')}
+      </label>
+      <input
+        id={id}
+        type="password"
+        autocomplete="off"
+        spellcheck={false}
+        placeholder={value ? maskKey(value) : t('ai.apiKeyPlaceholder')}
+        value={key}
+        onInput={(e) => setKey(e.currentTarget.value)}
+        onBlur={() => {
+          if (key.trim()) onChange(key.trim());
+          setKey('');
+        }}
+      />
+      {value ? (
+        <button type="button" class="btn btn-ghost small" onClick={() => onChange('')}>
+          {t('ai.forgetKey')}
+        </button>
+      ) : null}
+    </>
+  );
+}
+
+function TextField({ id, label, value, placeholder, type = 'text', onChange }: { id: string; label: string; value: string; placeholder?: string; type?: string; onChange: (v: string) => void }) {
+  return (
+    <>
+      <label class="field-label small" for={id}>
+        {label}
+      </label>
+      <input id={id} type={type} spellcheck={false} value={value} {...(placeholder ? { placeholder } : {})} onChange={(e) => onChange(e.currentTarget.value.trim())} />
+    </>
+  );
+}
 
 function ByokFields({ id, config, onChange }: { id: BrowserProviderId; config: ByokConfig; onChange: (c: ByokConfig) => void }) {
   const [key, setKey] = useState('');
@@ -51,7 +92,7 @@ function ByokFields({ id, config, onChange }: { id: BrowserProviderId; config: B
 }
 
 /** Settings → AI director (B8): status, chain, usage, sign-in, BYOK. */
-export function AiSettings({ session }: { session: ReaderSession }) {
+export function AiSettings({ session }: { session?: ReaderSession }) {
   const env = useEnv();
   const prefs = aiPrefs.value;
   const details = aiDetails.value;
@@ -150,7 +191,7 @@ export function AiSettings({ session }: { session: ReaderSession }) {
         </div>
       ) : null}
 
-      {session.ai ? (
+      {session?.ai ? (
         <div class="field">
           <button
             type="button"
@@ -213,6 +254,94 @@ export function AiSettings({ session }: { session: ReaderSession }) {
           })}
         </ol>
       </div>
+
+      <div class="field">
+        <span class="field-label" id="ai-images-label">
+          {t('ai.images')}
+        </span>
+        <div class="segmented" role="radiogroup" aria-labelledby="ai-images-label">
+          {BROWSER_IMAGE_PROVIDERS.map((m) => (
+            <button key={m} type="button" role="radio" aria-checked={prefs.images.provider === m} onClick={() => change((p) => ({ ...p, images: { ...p.images, provider: m } }))}>
+              {t(`ai.images.${m}` as MessageKey)}
+            </button>
+          ))}
+        </div>
+        {prefs.images.provider !== 'off' ? (
+          <div class="byok-fields">
+            <KeyField id="ai-images-key" value={prefs.images.apiKey} onChange={(apiKey) => change((p) => ({ ...p, images: { ...p.images, apiKey } }))} />
+            <TextField id="ai-images-model" label={t('ai.model')} value={prefs.images.model} placeholder={t('ai.imageModelPlaceholder')} onChange={(model) => change((p) => ({ ...p, images: { ...p.images, model } }))} />
+            {prefs.images.provider === 'openai-compatible' ? (
+              <TextField id="ai-images-url" type="url" label={t('ai.baseUrl')} value={prefs.images.baseURL} placeholder="https://…/v1" onChange={(baseURL) => change((p) => ({ ...p, images: { ...p.images, baseURL } }))} />
+            ) : null}
+          </div>
+        ) : null}
+        <p class="field-hint">{prefs.images.provider === 'openrouter' ? t('ai.imagesHintOpenRouter') : t('ai.imagesHint')}</p>
+      </div>
+
+      <div class="field">
+        <label class="check">
+          <input type="checkbox" checked={prefs.voice.enabled} onChange={(e) => change((p) => ({ ...p, voice: { ...p.voice, enabled: e.currentTarget.checked } }))} />
+          {t('ai.voice')}
+        </label>
+        {prefs.voice.enabled ? (
+          <div class="byok-fields">
+            <div class="segmented" role="radiogroup" aria-label={t('ai.voice')}>
+              {BROWSER_VOICE_PRESETS.map((m) => (
+                <button key={m} type="button" role="radio" aria-checked={prefs.voice.preset === m} onClick={() => change((p) => ({ ...p, voice: { ...p.voice, preset: m } }))}>
+                  {t(`ai.voice.${m}` as MessageKey)}
+                </button>
+              ))}
+            </div>
+            {prefs.voice.preset !== 'openai' ? (
+              <TextField
+                id="ai-voice-url"
+                type="url"
+                label={t('ai.baseUrl')}
+                value={prefs.voice.baseURL}
+                placeholder={prefs.voice.preset === 'qwentts' ? 'http://127.0.0.1:8080/v1' : 'https://…/v1'}
+                onChange={(baseURL) => change((p) => ({ ...p, voice: { ...p.voice, baseURL } }))}
+              />
+            ) : null}
+            {prefs.voice.preset !== 'qwentts' ? <KeyField id="ai-voice-key" value={prefs.voice.apiKey} onChange={(apiKey) => change((p) => ({ ...p, voice: { ...p.voice, apiKey } }))} /> : null}
+            {prefs.voice.preset !== 'qwentts' ? (
+              <TextField id="ai-voice-model" label={t('ai.model')} value={prefs.voice.model} placeholder={prefs.voice.preset === 'openai' ? 'gpt-4o-mini-tts' : ''} onChange={(model) => change((p) => ({ ...p, voice: { ...p.voice, model } }))} />
+            ) : null}
+            <TextField id="ai-voice-voices" label={t('ai.voices')} value={prefs.voice.voices} placeholder={prefs.voice.preset === 'openai' ? 'alloy, nova' : 'serena'} onChange={(voices) => change((p) => ({ ...p, voice: { ...p.voice, voices } }))} />
+          </div>
+        ) : null}
+        <p class="field-hint">{t('ai.voiceHint')}</p>
+      </div>
+
+      <Capabilities />
     </>
+  );
+}
+
+/** What works here and what needs the local server (spec 006 B3). */
+function Capabilities() {
+  const b = aiBackend.value;
+  const server = b?.mode === 'server';
+  const rows: Array<[MessageKey, boolean, MessageKey]> = [
+    ['ai.cap.reading', true, 'ai.cap.always'],
+    ['ai.cap.plans', !!b && b.plans !== false, 'ai.cap.needsKey'],
+    ['ai.cap.images', !!b?.image, 'ai.cap.needsImages'],
+    ['ai.cap.voices', !!b?.tts, 'ai.cap.needsVoice'],
+    ['ai.cap.subscription', server, 'ai.cap.needsServer'],
+  ];
+  return (
+    <div class="field">
+      <span class="field-label">{t('ai.cap.title')}</span>
+      <ul class="provider-list capability-list">
+        {rows.map(([label, ok, hint]) => (
+          <li key={label} class={ok ? 'is-ok' : 'is-off'}>
+            <span class="provider-dot" aria-hidden="true" />
+            <span class="provider-text">
+              <span class="provider-name">{t(label)}</span>
+              <span class="provider-meta">{ok ? t(hint === 'ai.cap.always' ? hint : 'ai.available') : t(hint)}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

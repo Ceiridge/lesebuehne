@@ -1,5 +1,27 @@
 # Changelog
 
+## M6 – The tool online as a static site (2026-10-17)
+
+Try it: `bun run build && bun run preview`, open the page once, stop the preview and reload: the
+player, its fonts and the samples still load. On GitHub, enable Pages with GitHub Actions.
+
+- GitHub Pages workflow (samples, typecheck, tests, build, deploy `dist/`); relative URLs work
+  under the repository sub-path.
+- Installable and offline: web app manifest, generated icons (SVG and PNG, maskable) and a small
+  generated service worker (precached build, network-first pages, never API or provider requests,
+  old caches removed, update notice). Only on `https:` or loopback.
+- AI in the browser with own keys: illustrations through OpenRouter image models
+  (`chat/completions` with image output, first picture as style reference) or OpenAI-compatible
+  images endpoints; voices through OpenAI-compatible speech endpoints (qwentts preset, OpenAI) with
+  the shared aligner. Pictures and audio are cached in IndexedDB. A voice or images alone work
+  without a text model (the heuristic plans stay).
+- Image and speech logic shared by server and browser (`ImageDirector`, `SpeechDirector`); the
+  server also offers `kind: 'openrouter'` images.
+- Hosted page with a local server: `LESEBUEHNE_ORIGINS`, Private Network Access preflights for
+  allowed origins, the hosted page asks the configured server first, `doctor` lists the origins.
+- Settings → AI director: images and voice sections and a "what works here" summary; the start
+  page explains static mode once and opens the AI settings without a book.
+
 ## M5 – Illustrations (2026-10-17)
 
 Try it: `bun run dev` with a ChatGPT sign-in available (image-use or codex-auth); sections the

@@ -1,13 +1,10 @@
-import { addVariant, cacheKey, contentHash, selectedValue, styleBibleVersion, VisualPlanSchema, type Book, type CacheEntry, type ImageProvider, type ProviderRegistry, type ResultCache, type StyleBible, type VisualPlan } from '@lesebuehne/core';
-import { mkdir, rename } from 'node:fs/promises';
+import { VisualPlanSchema, type Book, type ProviderRegistry, type ResultCache, type StyleBible, type VisualPlan } from '@lesebuehne/core';
+import { ImageDirector } from '@lesebuehne/director';
 import { join } from 'node:path';
 import * as z from 'zod';
+import { DiskStore } from './disk-store.ts';
 
-/** Stored per variant; the file lives in the images cache directory. */
-interface ImageVariant {
-  file: string;
-  mime: string;
-}
+export { imagePrompt } from '@lesebuehne/director';
 
 export interface ImageResponse {
   url: string;
@@ -17,8 +14,8 @@ export interface ImageResponse {
   selected: number;
 }
 
-const SIZES: Record<string, string> = { '16:9': '1536x1024', '3:2': '1536x1024', '4:3': '1536x1024', '1:1': '1024x1024' };
-const FILE = /^[a-z0-9-]{1,90}\.(png|jpg)$/u;
+const FILE = /^[a-z0-9-]{1,90}\.(png|jpg|webp)$/u;
+const MIME: Readonly<Record<string, string>> = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp' };
 
 const ImageBody = z.object({
   bookId: z.string().min(1),
@@ -28,17 +25,9 @@ const ImageBody = z.object({
   select: z.number().int().min(0).optional(),
 });
 
-/** The full prompt: the director's scene in the book's illustration style, without lettering. */
-export function imagePrompt(plan: VisualPlan, sb: StyleBible | undefined): string {
-  return [plan.image?.prompt ?? '', sb ? `Style: ${sb.illustrationStyle}` : '', 'No text, no letters, no captions, no watermarks.'].filter(Boolean).join('\n\n');
-}
-
-/**
- * Images for `image` plans (spec 005 B2): provider chain, disk files, variants, and the book's
- * first image as style reference for the following ones.
- */
+/** Images for `image` plans (spec 005 B2): the shared image director with files on disk. */
 export class ImageService {
-  private readonly inflight = new Map<string, Promise<CacheEntry<ImageVariant>>>();
+  private readonly director: ImageDirector;
 
   constructor(
     private readonly o: {
@@ -50,62 +39,14 @@ export class ImageService {
       styleBible: (book: Book) => Promise<StyleBible | undefined>;
       log?: (line: string) => void;
     },
-  ) {}
-
-  private refKey = (book: Book): string => cacheKey('imgref', { book: book.id });
-
-  private async styleRef(book: Book): Promise<Uint8Array | undefined> {
-    if (!this.o.styleReference) return undefined;
-    const ref = selectedValue(await this.o.cache.get<ImageVariant>(this.refKey(book)));
-    const f = ref ? Bun.file(join(this.o.dir, ref.file)) : undefined;
-    return f && (await f.exists()) ? new Uint8Array(await f.arrayBuffer()) : undefined;
+  ) {
+    const { dir: _dir, ...rest } = o;
+    this.director = new ImageDirector({ ...rest, store: new DiskStore(o.dir) });
   }
 
   async generate(book: Book, sectionId: string, plan: VisualPlan, opts: { regenerate?: boolean; select?: number }, signal: AbortSignal): Promise<ImageResponse> {
-    if (plan.mode !== 'image' || !plan.image) throw new Error('plan has no image');
-    const sb = await this.o.styleBible(book);
-    const key = cacheKey('img', { book: book.id, section: sectionId, spec: contentHash(JSON.stringify(plan.image)), style: styleBibleVersion(sb), chain: this.o.chain.join(',') });
-    let entry = await this.o.cache.get<ImageVariant>(key);
-    if (entry && opts.select !== undefined && opts.select < entry.variants.length) {
-      entry = { ...entry, selected: opts.select };
-      await this.o.cache.put(key, entry);
-    }
-    const respond = (e: CacheEntry<ImageVariant>, cached: boolean): ImageResponse => ({
-      url: `api/images/${selectedValue(e)!.file}`,
-      providerId: e.variants[e.selected]?.providerId ?? '?',
-      cached,
-      variants: e.variants.length,
-      selected: e.selected,
-    });
-    if (entry && !opts.regenerate) return respond(entry, true);
-    const flight = `${key}:${opts.regenerate ? 'r' : ''}`;
-    let p = this.inflight.get(flight);
-    if (!p) {
-      p = (async () => {
-        const styleRef = await this.styleRef(book);
-        const size = SIZES[plan.image!.aspect] ?? '1536x1024';
-        const r = await this.o.registry.run(
-          'image',
-          this.o.chain,
-          (provider: ImageProvider, s) => provider.generate({ prompt: imagePrompt(plan, sb), size, ...(styleRef ? { styleRef } : {}), signal: s }),
-          signal,
-        );
-        const before = await this.o.cache.get<ImageVariant>(key);
-        const file = `${key}-${before?.variants.length ?? 0}.${r.value.mime === 'image/jpeg' ? 'jpg' : 'png'}`;
-        await mkdir(this.o.dir, { recursive: true });
-        const tmp = join(this.o.dir, `${file}.${crypto.randomUUID()}.tmp`);
-        await Bun.write(tmp, r.value.image);
-        await rename(tmp, join(this.o.dir, file));
-        const next = addVariant(before, { file, mime: r.value.mime }, r.providerId, r.value.model);
-        await this.o.cache.put(key, next);
-        // The first image of a book sets its visual style for the following ones.
-        if (!(await this.o.cache.get(this.refKey(book)))) await this.o.cache.put(this.refKey(book), addVariant(undefined, { file, mime: r.value.mime }, r.providerId));
-        this.o.log?.(`image ${sectionId} ← ${r.providerId} (${Math.round(r.value.image.byteLength / 1024)} KB${styleRef ? ', style ref' : ''})`);
-        return next;
-      })().finally(() => this.inflight.delete(flight));
-      this.inflight.set(flight, p);
-    }
-    return respond(await p, false);
+    const r = await this.director.generate(book, sectionId, plan, opts, signal);
+    return { url: `api/images/${r.file}`, providerId: r.providerId, cached: r.cached, variants: r.variants, selected: r.selected };
   }
 
   /** `POST /api/images`. */
@@ -128,6 +69,6 @@ export class ImageService {
     if (!FILE.test(name)) return new Response('Bad Request', { status: 400 });
     const f = Bun.file(join(this.o.dir, name));
     if (!(await f.exists())) return new Response('Not Found', { status: 404 });
-    return new Response(f, { headers: { 'content-type': name.endsWith('.jpg') ? 'image/jpeg' : 'image/png', 'cache-control': 'private, max-age=31536000, immutable' } });
+    return new Response(f, { headers: { 'content-type': MIME[name.slice(name.lastIndexOf('.') + 1)] ?? 'image/png', 'cache-control': 'private, max-age=31536000, immutable' } });
   }
 }

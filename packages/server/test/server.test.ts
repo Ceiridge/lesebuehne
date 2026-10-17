@@ -265,3 +265,18 @@ describe('M5: images', () => {
     expect((await call(api, 'POST', '/api/images', { bookId: book.id, sectionId, plan: { ...plan, mode: 'kinetic', image: undefined } })).status).toBe(503);
   });
 });
+
+describe('M6: hosted page + local server', () => {
+  test('Private Network Access preflight only for allowed origins; origins from env', () => {
+    expect(envOverrides({ LESEBUEHNE_ORIGINS: 'https://a.github.io/, https://b.example' }).server?.origins).toEqual(['https://a.github.io', 'https://b.example']);
+  });
+  test('preflight', async () => {
+    const { api } = setup([], { server: { port: 8787, origins: ['https://a.github.io'] } });
+    const ok = await call(api, 'OPTIONS', '/api/capabilities', undefined, { origin: 'https://a.github.io', 'access-control-request-private-network': 'true' });
+    expect(ok.status).toBe(204);
+    expect(ok.headers.get('access-control-allow-private-network')).toBe('true');
+    expect(ok.headers.get('access-control-expose-headers')).toContain('x-lb-words');
+    const bad = await call(api, 'OPTIONS', '/api/capabilities', undefined, { origin: 'https://evil.example', 'access-control-request-private-network': 'true' });
+    expect(bad.status).toBe(403);
+  });
+});

@@ -4,11 +4,11 @@ import { $ } from 'bun';
 const ROOT = Bun.fileURLToPath(new URL('..', import.meta.url));
 
 describe('16-2: repository content', () => {
-  test('top level holds only config, packages, samples, scripts, tests, README and CHANGELOG', async () => {
+  test('top level holds only config, CI, packages, samples, scripts, tests, README and CHANGELOG', async () => {
     const listed = (await $`git -C ${ROOT} ls-files --cached --others --exclude-standard`.text()).split('\n').filter(Boolean);
     const top = new Set(listed.map((f) => f.split('/')[0]!));
     const allowed = new Set([
-      '.gitignore', '.gitattributes', 'package.json', 'bun.lock', 'bunfig.toml', 'tsconfig.json',
+      '.gitignore', '.gitattributes', '.github', 'package.json', 'bun.lock', 'bunfig.toml', 'tsconfig.json',
       'packages', 'samples', 'scripts', 'tests', 'README.md', 'CHANGELOG.md', 'lesebuehne.config.ts',
     ]);
     expect([...top].filter((t) => !allowed.has(t))).toEqual([]);

@@ -25,8 +25,11 @@ export interface TtsConfig {
 
 export interface ImageConfig {
   id: string;
-  /** `codex`: the Codex backend's image tool with the codex-auth sign-in (fallback for image-use). */
-  kind: 'image-use' | 'codex' | 'openai-compatible';
+  /**
+   * `codex`: the Codex backend's image tool with the codex-auth sign-in (fallback for image-use).
+   * `openrouter`: an image model there (`model` required; the key defaults to providers.openrouter).
+   */
+  kind: 'image-use' | 'codex' | 'openrouter' | 'openai-compatible';
   /** codex: image model and quality for the tool (omit for the backend default). */
   imageModel?: string;
   quality?: string;
@@ -125,7 +128,13 @@ type Env = Record<string, string | undefined>;
 export function envOverrides(env: Env): ConfigInput {
   const o: ConfigInput = {};
   const providers: Record<string, unknown> = {};
-  if (env.LESEBUEHNE_PORT) o.server = { port: Number(env.LESEBUEHNE_PORT) };
+  if (env.LESEBUEHNE_PORT || env.LESEBUEHNE_ORIGINS) {
+    o.server = {
+      ...(env.LESEBUEHNE_PORT ? { port: Number(env.LESEBUEHNE_PORT) } : {}),
+      // Hosted player pages allowed to use this server, e.g. "https://name.github.io".
+      ...(env.LESEBUEHNE_ORIGINS ? { origins: env.LESEBUEHNE_ORIGINS.split(',').map((s) => s.trim().replace(/\/+$/u, '')).filter(Boolean) } : {}),
+    };
+  }
   if (env.LESEBUEHNE_DATA_DIR) o.dataDir = env.LESEBUEHNE_DATA_DIR;
   if (env.LESEBUEHNE_LLM_CHAIN) o.llm = { chain: env.LESEBUEHNE_LLM_CHAIN.split(',').map((s) => s.trim()).filter(Boolean) };
   if (env.OPENROUTER_API_KEY || env.OPENROUTER_MODEL) {

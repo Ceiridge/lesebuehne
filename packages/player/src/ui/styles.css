@@ -2162,3 +2162,42 @@ kbd {
   place-items: center;
   padding: 6%;
 }
+
+/* ---------- Static mode (M6) ---------- */
+
+.static-hint {
+  display: grid;
+  gap: 12px;
+  max-width: 68ch;
+  margin: -12px 0 28px;
+  padding: 14px 16px;
+  border: 1px solid var(--c-border);
+  border-radius: 14px;
+  background: var(--c-surface);
+}
+.static-hint p {
+  margin: 0;
+  color: var(--c-muted);
+}
+.static-hint-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.modal.modal-wide {
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+}
+.modal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.modal-head h2 {
+  margin: 0;
+}
+.modal-wide .settings-group {
+  display: none;
+}

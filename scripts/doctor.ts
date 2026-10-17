@@ -12,6 +12,7 @@ if (import.meta.main) {
   const { registry, chain } = context.providers;
   console.log(`Config: ${loaded.files.join(', ') || 'defaults only'}`);
   console.log(`Data directory: ${loaded.dataDir}`);
+  console.log(`Allowed hosted pages: ${loaded.config.server.origins.join(', ') || 'none (same origin only; set LESEBUEHNE_ORIGINS)'}`);
   console.log(`LLM chain: ${[...chain, 'heuristic'].join(' → ')}`);
   const tts = registry.list('tts') as TTSProvider[];
   console.log(`TTS voices: ${tts.length ? tts.flatMap((p) => p.voices.map((v) => `${p.id}:${v.id}`)).join(', ') : 'none configured (browser voices only)'}\n`);

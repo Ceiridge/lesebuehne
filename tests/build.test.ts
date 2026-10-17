@@ -47,7 +47,7 @@ describe('01-3: static build', () => {
 });
 
 describe('16-1: release build check', () => {
-  test('index.html, assets, 4 font families, licences, samples; no remote URLs, no service worker or manifest', async () => {
+  test('index.html, assets, 4 font families, licences, samples, PWA files; no remote URLs', async () => {
     const outdir = `${TMP}/dist-release`;
     const { files } = await build(outdir);
     expect(files).toContain('index.html');
@@ -65,9 +65,23 @@ describe('16-1: release build check', () => {
       ...[...css.matchAll(/url\(\s*["']?([^"')]+)/g)].map((m) => m[1]!),
     ].filter((u) => /^https?:\/\//i.test(u));
     expect(remote).toEqual([]);
-    expect(files.some((f) => /manifest\.(json|webmanifest)$/.test(f) || /(^|\/)(sw|service-worker)\.js$/.test(f))).toBe(false);
-    const js = (await Promise.all(files.filter((f) => f.endsWith('.js')).map((f) => Bun.file(`${outdir}/${f}`).text()))).join('\n');
-    expect(js.includes('serviceWorker.register')).toBe(false);
+    // M6 (spec 006 B2): installable and offline.
+    for (const f of ['manifest.webmanifest', 'sw.js', 'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png']) expect(files).toContain(f);
+    expect(html).toContain('<link rel="manifest" href="./manifest.webmanifest">');
+    expect(html).toContain('<meta name="lb-service-worker" content="./sw.js">');
+    const m = JSON.parse(await Bun.file(`${outdir}/manifest.webmanifest`).text()) as { start_url: string; scope: string; icons: Array<{ src: string }> };
+    expect([m.start_url, m.scope]).toEqual(['./', './']);
+    for (const icon of m.icons) expect(files).toContain(icon.src);
+    const png = new Uint8Array(await Bun.file(`${outdir}/icons/icon-512.png`).arrayBuffer());
+    expect([...png.slice(1, 4)].map((c) => String.fromCharCode(c)).join('')).toBe('PNG');
+    expect(new DataView(png.buffer).getUint32(16)).toBe(512);
+    const sw = await Bun.file(`${outdir}/sw.js`).text();
+    const precache = JSON.parse(/const PRECACHE = (\[.*\]);/u.exec(sw)![1]!) as string[];
+    expect(precache).toContain('./index.html');
+    expect(precache).toContain('./manifest.webmanifest');
+    expect(precache.some((p) => p.includes('/api/') || p === './sw.js')).toBe(false);
+    expect(sw).toContain("url.pathname.includes('/api/')");
+    expect(sw).toContain('url.origin !== self.location.origin');
   });
 
   test('build refuses to clean a root or the repository', async () => {

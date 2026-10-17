@@ -6,7 +6,7 @@ import { OpenAICompatibleLLM } from '@lesebuehne/llm-openai-compatible';
 import { OpenRouterLLM } from '@lesebuehne/llm-openrouter';
 import { OpenAICompatibleTTS, openaiTTS, qwentts } from '@lesebuehne/tts-openai-compatible';
 import { ImageUseProvider } from '@lesebuehne/image-use';
-import { OpenAICompatibleImages } from '@lesebuehne/image-openai-compatible';
+import { OpenAICompatibleImages, OpenRouterImages } from '@lesebuehne/image-openai-compatible';
 import { join } from 'node:path';
 import type { ServerConfig, TaskModels } from './config.ts';
 
@@ -92,6 +92,9 @@ export function buildProviders(config: ServerConfig, dataDir: string, fetchImpl?
       const auth = registry.get('codex-auth', 'llm');
       if (!(auth instanceof CodexAuthLLM)) continue;
       registry.register(new CodexImageProvider(auth, { id: i.id, ...(i.model ? { model: i.model } : {}), ...(i.imageModel ? { imageModel: i.imageModel } : {}), ...(i.quality ? { quality: i.quality } : {}), ...f }));
+    } else if (i.kind === 'openrouter') {
+      const key = i.apiKey ?? p.openrouter.apiKey;
+      registry.register(new OpenRouterImages({ id: i.id, ...(key ? { apiKey: key } : {}), ...(i.model ? { model: i.model } : {}), runsIn: ['server'], ...f }));
     } else {
       registry.register(
         new OpenAICompatibleImages({

@@ -278,7 +278,11 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
           'access-control-expose-headers': 'x-lb-words, x-lb-provider, x-lb-cached',
         }
       : {};
-    if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    if (req.method === 'OPTIONS') {
+      // Private Network Access: a hosted (https) page may call this loopback server once allowed.
+      const pna: Record<string, string> = origin && req.headers.get('access-control-request-private-network') === 'true' ? { 'access-control-allow-private-network': 'true' } : {};
+      return new Response(null, { status: 204, headers: { ...cors, ...pna } });
+    }
     const path = new URL(req.url).pathname;
     let res: Response;
     const m = /^\/api\/(?:books\/([^/]+)|auth\/([^/]+)\/login)$/u.exec(path);

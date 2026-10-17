@@ -152,3 +152,13 @@ describe('11-5: key mapping', () => {
     });
   }
 });
+
+describe('M6: service worker guard', () => {
+  test('only secure contexts or loopback, only with the API', async () => {
+    const { canUseServiceWorker } = await import('../src/app/pwa.ts');
+    expect(canUseServiceWorker({ protocol: 'https:', hostname: 'name.github.io' }, true)).toBe(true);
+    expect(canUseServiceWorker({ protocol: 'http:', hostname: '127.0.0.1' }, true)).toBe(true);
+    expect(canUseServiceWorker({ protocol: 'http:', hostname: 'example.org' }, true)).toBe(false);
+    expect(canUseServiceWorker({ protocol: 'https:', hostname: 'x' }, false)).toBe(false);
+  });
+});

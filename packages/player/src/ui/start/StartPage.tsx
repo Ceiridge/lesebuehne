@@ -1,7 +1,10 @@
 import { parseSamples, type Sample } from '@lesebuehne/ingest';
 import { useSignal } from '@preact/signals';
 import { useEffect, useRef } from 'preact/hooks';
+import { aiConnecting, aiPrefs } from '../../ai/connect.ts';
+import { aiStatus } from '../../ai/state.ts';
 import { useEnv } from '../../app/env.ts';
+import { showStaticHint, STATIC_HINT_KEY } from '../../app/static-hint.ts';
 import { ReaderSession } from '../../app/session.ts';
 import { route, settings, toast } from '../../app/store.ts';
 import { fileBytes, importBook, needsLanguage, type ImportRequest } from '../../import/import-service.ts';
@@ -9,6 +12,7 @@ import { t, type MessageKey } from '../../i18n/i18n.ts';
 import type { LibraryService } from '../../storage/library.ts';
 import type { LibraryEntry } from '../../storage/repository.ts';
 import { IconBook, IconLogo, IconTrash, IconUpload } from '../icons.tsx';
+import { AiSettings } from '../reader/AiSettings.tsx';
 import { QuickPrefs } from './QuickPrefs.tsx';
 
 export const LAST_BOOK_KEY = 'lesebuehne.lastBook';
@@ -34,6 +38,8 @@ export function StartPage() {
   const dragging = useSignal(false);
   const pending = useSignal<PendingFile | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const hintDismissed = useSignal(env.kv.get(STATIC_HINT_KEY) === '1');
+  const aiOpen = useSignal(false);
 
   const refresh = async (lib: LibraryService): Promise<void> => {
     books.value = await lib.list();
@@ -145,6 +151,27 @@ export function StartPage() {
       <main class="start-main">
         <p class="tagline">{t('app.tagline')}</p>
 
+        {showStaticHint({ known: !!aiPrefs.value, connecting: aiConnecting.value, mode: aiStatus.value.mode, aiOff: aiPrefs.value?.mode === 'off', dismissed: hintDismissed.value }) ? (
+          <section class="static-hint" role="note">
+            <p>{t('start.staticHint')}</p>
+            <div class="static-hint-actions">
+              <button type="button" class="btn btn-primary small" onClick={() => (aiOpen.value = true)}>
+                {t('start.staticSetup')}
+              </button>
+              <button
+                type="button"
+                class="btn btn-ghost small"
+                onClick={() => {
+                  env.kv.set(STATIC_HINT_KEY, '1');
+                  hintDismissed.value = true;
+                }}
+              >
+                {t('start.staticDismiss')}
+              </button>
+            </div>
+          </section>
+        ) : null}
+
         {last ? (
           <section class="continue" aria-label={t('start.open')}>
             <button type="button" class="continue-card" onClick={() => void openStored(last)}>
@@ -247,6 +274,8 @@ export function StartPage() {
         </div>
       ) : null}
 
+      {aiOpen.value ? <AiDialog onClose={() => (aiOpen.value = false)} /> : null}
+
       {pending.value ? (
         <LanguagePrompt
           fileName={pending.value.fileName}
@@ -258,6 +287,23 @@ export function StartPage() {
           }}
         />
       ) : null}
+    </div>
+  );
+}
+
+/** AI settings without an open book (spec 006 B5). */
+function AiDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <div class="modal-backdrop" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div class="modal modal-wide" role="dialog" aria-modal="true" aria-labelledby="ai-dialog-title" onKeyDown={(e) => e.key === 'Escape' && onClose()}>
+        <div class="modal-head">
+          <h2 id="ai-dialog-title">{t('start.aiTitle')}</h2>
+          <button type="button" class="btn btn-ghost small" onClick={onClose}>
+            {t('start.close')}
+          </button>
+        </div>
+        <AiSettings />
+      </div>
     </div>
   );
 }

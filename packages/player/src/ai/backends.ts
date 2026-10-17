@@ -1,7 +1,10 @@
-import { MemoryCache, ProviderRegistry, type Book, type LLMProvider, type ProviderStats, type ResultCache, type TTSVoice, type VisualPlan, type WordTiming } from '@lesebuehne/core';
+import { MemoryCache, ProviderRegistry, type Book, type ImageProvider, type LLMProvider, type ProviderStats, type ResultCache, type TTSProvider, type TTSVoice, type VisualPlan, type WordTiming } from '@lesebuehne/core';
 import {
   DEFAULT_BUDGET,
   DirectorService,
+  ImageDirector,
+  SpeechDirector,
+  type MediaStore,
   registryComplete,
   type AnimateOptions,
   type AnimationResponse,
@@ -14,6 +17,9 @@ import {
 import { AnthropicCompatibleLLM } from '@lesebuehne/llm-anthropic-compatible';
 import { OpenAICompatibleLLM } from '@lesebuehne/llm-openai-compatible';
 import { OpenRouterLLM } from '@lesebuehne/llm-openrouter';
+import { OpenAICompatibleImages, OpenRouterImages } from '@lesebuehne/image-openai-compatible';
+import { OpenAICompatibleTTS, openaiTTS, qwentts } from '@lesebuehne/tts-openai-compatible';
+import { MemoryMediaStore } from './idb-cache.ts';
 import type { AiPrefs, BrowserProviderId } from './prefs.ts';
 
 export type Http = (url: string, init?: RequestInit) => Promise<Response>;
@@ -50,6 +56,8 @@ export interface BackendStatus {
 /** Where AI plans come from: the local server or providers in this browser (BYOK). */
 export interface AiBackend {
   readonly mode: 'server' | 'browser';
+  /** false: no text model (only voices or images); the heuristic plans stay. */
+  readonly plans?: boolean;
   prepare(book: Book, opts: VariantOptions, signal: AbortSignal): Promise<StyleResponse>;
   plan(book: Book, sectionId: string, opts: PlanOptions, signal: AbortSignal): Promise<PlanResponse>;
   /** Animation program for an `animation` plan (throws when none could be written). */
@@ -187,17 +195,99 @@ export function browserProviders(prefs: AiPrefs, http: Http): LLMProvider[] {
   return prefs.order.map(make).filter((p): p is LLMProvider => !!p);
 }
 
+/** Image and voice providers configured in this browser (spec 006 B3). */
+export interface BrowserMedia {
+  image?: ImageProvider;
+  tts?: TTSProvider;
+}
+
+export function browserMedia(prefs: AiPrefs, http: Http): BrowserMedia {
+  const fetch = (u: string, i?: RequestInit) => http(u, i);
+  const out: BrowserMedia = {};
+  const im = prefs.images;
+  if (im.provider === 'openrouter') {
+    const key = im.apiKey || prefs.byok.openrouter.apiKey;
+    if (key && im.model) out.image = new OpenRouterImages({ id: 'openrouter-images', apiKey: key, model: im.model, runsIn: ['browser'], fetch });
+  } else if (im.provider === 'openai-compatible' && im.baseURL) {
+    out.image = new OpenAICompatibleImages({
+      id: 'browser-images',
+      label: 'Images (this browser)',
+      baseURL: im.baseURL,
+      ...(im.apiKey ? { apiKey: im.apiKey, requiresKey: true } : {}),
+      ...(im.model ? { model: im.model } : {}),
+      runsIn: ['browser'],
+      fetch,
+    });
+  }
+  const v = prefs.voice;
+  const voices = v.voices.split(',').map((x) => x.trim()).filter(Boolean);
+  if (v.enabled) {
+    if (v.preset === 'openai') {
+      if (v.apiKey) out.tts = openaiTTS({ id: 'openai-tts', apiKey: v.apiKey, ...(v.model ? { model: v.model } : {}), ...(voices.length ? { voices } : {}), fetch });
+    } else if (v.preset === 'qwentts') {
+      if (voices.length) out.tts = qwentts({ id: 'qwentts', ...(v.baseURL ? { baseURL: v.baseURL } : {}), voices, fetch });
+    } else if (v.baseURL && voices.length) {
+      out.tts = new OpenAICompatibleTTS({
+        id: 'browser-tts',
+        label: 'Voice (this browser)',
+        baseURL: v.baseURL,
+        voices: voices.map((id) => ({ id, name: id, languages: [] })),
+        ...(v.apiKey ? { apiKey: v.apiKey, requiresKey: true } : {}),
+        ...(v.model ? { model: v.model } : {}),
+        runsIn: ['browser'],
+        fetch,
+      });
+    }
+  }
+  return out;
+}
+
 /** Providers in this browser (BYOK), same director service as the server. */
 export class BrowserBackend implements AiBackend {
   readonly mode = 'browser' as const;
+  readonly plans: boolean;
   readonly registry = new ProviderRegistry();
+  readonly image?: AiBackend['image'];
+  readonly tts?: AiBackend['tts'];
   private readonly service: DirectorService;
   private readonly chain: string[];
+  /** Object URLs of stored pictures, one per file. */
+  private readonly urls = new Map<string, string>();
 
-  constructor(providers: LLMProvider[], cache: ResultCache = new MemoryCache()) {
+  constructor(
+    providers: LLMProvider[],
+    cache: ResultCache = new MemoryCache(),
+    media: BrowserMedia & { store?: MediaStore; objectUrl?: (b: Blob) => string } = {},
+  ) {
     for (const p of providers) this.registry.register(p);
     this.chain = providers.map((p) => p.id);
+    this.plans = providers.length > 0;
     this.service = new DirectorService({ complete: registryComplete(this.registry, this.chain), cache, chainId: `browser:${this.chain.join(',')}` });
+    const store = media.store ?? new MemoryMediaStore();
+    const objectUrl = media.objectUrl ?? ((b: Blob) => URL.createObjectURL(b));
+    if (media.image) {
+      this.registry.register(media.image);
+      const images = new ImageDirector({ registry: this.registry, chain: [media.image.id], cache, store, styleReference: true, styleBible: (b) => this.service.styleBible(b) });
+      this.image = async (book, sectionId, plan, opts, signal) => {
+        const r = await images.generate(book, sectionId, plan, opts, signal);
+        let url = this.urls.get(r.file);
+        if (!url) {
+          const bytes = await store.get(r.file);
+          if (!bytes) throw new Error('stored image missing');
+          url = objectUrl(new Blob([bytes as BlobPart], { type: r.mime }));
+          this.urls.set(r.file, url);
+        }
+        return { url, providerId: r.providerId, variants: r.variants, selected: r.selected };
+      };
+    }
+    if (media.tts) {
+      this.registry.register(media.tts);
+      const speech = new SpeechDirector(this.registry, store);
+      this.tts = async (text, lang, voice, signal) => {
+        const r = await speech.speak(text, lang, voice, signal);
+        return { audio: new Blob([r.audio as BlobPart], { type: 'audio/wav' }), words: r.words };
+      };
+    }
   }
 
   prepare(book: Book, opts: VariantOptions, signal: AbortSignal): Promise<StyleResponse> {
@@ -214,12 +304,23 @@ export class BrowserBackend implements AiBackend {
 
   async status(): Promise<BackendStatus> {
     const providers = await Promise.all(
-      this.registry.list('llm').map(async (p) => {
+      this.registry.list().map(async (p): Promise<ProviderStatus> => {
         const a = await this.registry.available(p.id);
-        return { id: p.id, label: p.label, available: a.ok, reason: a.reason ?? null, login: false, source: null, usage: this.registry.statsOf(p.id) };
+        return {
+          id: p.id,
+          kind: p.kind,
+          label: p.label,
+          available: a.ok,
+          reason: a.reason ?? null,
+          login: false,
+          source: null,
+          usage: this.registry.statsOf(p.id),
+          ...(p.kind === 'tts' ? { voices: [...p.voices] } : {}),
+        };
       }),
     );
-    return { chain: [...this.chain, 'heuristic'], providers, budget: DEFAULT_BUDGET };
+    // No image provider here: the director plans no pictures.
+    return { chain: [...this.chain, 'heuristic'], providers, budget: this.image ? DEFAULT_BUDGET : { ...DEFAULT_BUDGET, images: 0 } };
   }
 }
 
@@ -227,10 +328,20 @@ export class BrowserBackend implements AiBackend {
  * Finds the AI backend (B8): the server on the same origin, then the configured server URL, then
  * BYOK providers in this browser; undefined = heuristic only. Never blocks reading.
  */
-export async function detectBackend(o: { prefs: AiPrefs; http: Http; baseURI: string; cache?: () => ResultCache; timeoutMs?: number }): Promise<AiBackend | undefined> {
+export async function detectBackend(o: {
+  prefs: AiPrefs;
+  http: Http;
+  baseURI: string;
+  cache?: () => ResultCache;
+  media?: () => MediaStore;
+  timeoutMs?: number;
+}): Promise<AiBackend | undefined> {
   if (o.prefs.mode === 'off') return undefined;
-  const candidates = [new URL('/', o.baseURI).href, ...(o.prefs.serverUrl ? [o.prefs.serverUrl.replace(/\/?$/u, '/')] : [])];
-  for (const base of [...new Set(candidates)]) {
+  // A hosted page (spec 006 B4) asks the configured local server first: its own origin has none.
+  const own = new URL('/', o.baseURI).href;
+  const configured = o.prefs.serverUrl ? [o.prefs.serverUrl.replace(/\/?$/u, '/')] : [];
+  const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/)/u.test(own);
+  for (const base of [...new Set(local ? [own, ...configured] : [...configured, own])]) {
     try {
       const res = await o.http(new URL('api/capabilities', base).href, { signal: AbortSignal.timeout(o.timeoutMs ?? 2500) });
       const body = (await res.json().catch(() => undefined)) as { server?: string } | undefined;
@@ -240,5 +351,7 @@ export async function detectBackend(o: { prefs: AiPrefs; http: Http; baseURI: st
     }
   }
   const providers = browserProviders(o.prefs, o.http);
-  return providers.length ? new BrowserBackend(providers, o.cache?.()) : undefined;
+  const media = browserMedia(o.prefs, o.http);
+  if (!providers.length && !media.image && !media.tts) return undefined;
+  return new BrowserBackend(providers, o.cache?.(), { ...media, ...(o.media ? { store: o.media() } : {}) });
 }

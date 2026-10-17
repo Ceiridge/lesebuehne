@@ -2,7 +2,7 @@ import { signal } from '@preact/signals';
 import type { AppEnv } from '../app/env.ts';
 import { route } from '../app/store.ts';
 import { detectBackend } from './backends.ts';
-import { IdbResultCache } from './idb-cache.ts';
+import { IdbMediaStore, IdbResultCache } from './idb-cache.ts';
 import { loadAiPrefs, saveAiPrefs, type AiPrefs } from './prefs.ts';
 import { aiBackend, refreshDetails, setBackend } from './state.ts';
 
@@ -26,7 +26,7 @@ export async function connectAi(env: AppEnv): Promise<void> {
       prefs,
       http: env.http,
       baseURI: env.baseURI(),
-      ...(env.indexedDB ? { cache: () => new IdbResultCache(env.indexedDB!) } : {}),
+      ...(env.indexedDB ? { cache: () => new IdbResultCache(env.indexedDB!), media: () => new IdbMediaStore(env.indexedDB!) } : {}),
     });
     if (mine !== generation) return;
     setBackend(backend);

@@ -109,8 +109,10 @@ glossary of central concepts with glyphs and colours that the stage uses consist
    (local full mode) serve the player and the API on `127.0.0.1`. Keys and tokens stay on the
    server. `bun run doctor` lists every provider and why it is or is not available.
 2. **Browser only** (static hosting): Settings → AI director → own keys for OpenRouter, an
-   OpenAI-compatible or an Anthropic-compatible endpoint. Keys are stored only in that browser's
-   localStorage and requests go straight from the browser to the provider.
+   OpenAI-compatible or an Anthropic-compatible endpoint for plans and animations; an OpenRouter
+   image model or an OpenAI-compatible images endpoint for illustrations; an OpenAI-compatible
+   speech endpoint for voices. Keys are stored only in that browser's localStorage, requests go
+   straight from the browser to the provider, and pictures and audio are cached in IndexedDB.
 3. **Nothing configured:** heuristic director. Reading never waits for the AI.
 
 ### Server providers
@@ -123,7 +125,7 @@ the heuristic. Providers that are rate-limited or fail repeatedly cool down for 
 | `codex-auth` | A ChatGPT sign-in from OpenCode or the Codex CLI on this machine, or an own sign-in (Settings → Sign in) | Uses the ChatGPT Codex backend like OpenCode does. Other apps' tokens are only read, never refreshed. Model `auto` = first model the backend lists. |
 | `chatgpt-plan` | Settings → Sign in (official "Sign in with ChatGPT") | Tokens stored owner-only in the data directory. |
 | `openrouter` | `OPENROUTER_API_KEY` and a model (`OPENROUTER_MODEL` or config) | Optional daily call cap (`maxCallsPerDay`). |
-| images: `image-use`, `codex-image` | The `image-use` CLI (`IMAGE_USE_DIR`, default `~/.local/share/image-use`), else the Codex sign-in above | `images` in the config; also `openai-compatible` image endpoints with `baseURL`/`apiKey`/`model`. The CLI is started without a shell. |
+| images: `image-use`, `codex-image` | The `image-use` CLI (`IMAGE_USE_DIR`, default `~/.local/share/image-use`), else the Codex sign-in above | `images` in the config; also `openrouter` (an image model, the OpenRouter key) and `openai-compatible` image endpoints with `baseURL`/`apiKey`/`model`. The CLI is started without a shell. |
 | `anthropic-compatible` | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional `ANTHROPIC_BASE_URL`) | JSON through a forced tool call. |
 | `openai-compatible` | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_MODEL` (optional `OPENAI_COMPAT_API_KEY`) or entries in config | Covers OpenAI, Ollama (`http://127.0.0.1:11434/v1`), LM Studio and others. |
 
@@ -141,7 +143,8 @@ export default defineConfig({
 
 Keys belong in environment variables. Other variables: `LESEBUEHNE_PORT` (server port, default
 8787), `LESEBUEHNE_DATA_DIR` (cache, uploaded books, own sign-ins; default the platform's user data
-directory), `LESEBUEHNE_LLM_CHAIN` (comma-separated chain).
+directory), `LESEBUEHNE_LLM_CHAIN` (comma-separated chain), `LESEBUEHNE_ORIGINS` (hosted player
+pages allowed to use the server, comma-separated).
 
 ## Commands
 
@@ -163,14 +166,33 @@ Run all commands from the repository root.
 Example for a sub-path: `bun run preview -- --base /sub/` serves the build under `http://127.0.0.1:4173/sub/`.
 In Git Bash, write `--base sub` (Git Bash rewrites `/sub/` to a Windows path) or set `MSYS_NO_PATHCONV=1`.
 
-## Hosting
+## Online (static site)
 
-- The servers bind only to `127.0.0.1`.
+The player works without the local server as a static site: `bun run build` writes `dist/`, and
+its content runs on any static HTTP server, also under a sub-path (all URLs are relative). Fonts
+are self-hosted; the player contacts third-party servers only for the AI providers you configure.
+
+- **GitHub Pages:** `.github/workflows/pages.yml` type-checks, tests and builds on every push to
+  `main` and publishes `dist/`. Enable it once under Settings → Pages → Source: GitHub Actions.
+- **Installable and offline:** the build adds a web app manifest, icons and a service worker. After
+  the first visit the player, its fonts and the samples load without a network; books stay in the
+  browser's storage. A new version is announced with a short notice. The worker never caches API
+  or provider requests. It runs only on `https:` or loopback.
+- **What works without a server:** reading, highlighting, browser voices, import, library, the
+  heuristic director with diagrams. With own keys (Settings → AI director → "In this browser"):
+  LLM plans, Style Bible, animations, illustrations and AI voices. Only the ChatGPT subscription
+  routes (`codex-auth`, `chatgpt-plan`, `image-use`) need the local server, because their
+  tokens must not reach a browser. The start page says so on first use.
+- **Hosted page with a local server:** start the server with the page's origin allowed, e.g.
+  `LESEBUEHNE_ORIGINS=https://name.github.io bun run server` (or `server.origins` in the
+  config), and enter `http://127.0.0.1:8787` under Settings → AI director → Server address. The
+  server answers the browser's Private Network Access checks for allowed origins only;
+  `bun run doctor` lists them.
+- **A local qwentts from the browser:** the voice settings can talk to `tts-server` directly
+  when it sends CORS headers; otherwise use it through the local Lesebühne server.
 - Open the player over HTTP. `file://` (double-click on `index.html`) is not supported.
-- The content of `dist/` works on any static HTTP server, also under a sub-path, because all asset
-  URLs are relative. Fonts are self-hosted. The player contacts third-party servers only for the
-  AI providers you configure yourself.
-- The AI API accepts only loopback hosts and the same origin (plus `server.origins` in the config).
+- The servers bind only to `127.0.0.1`. The AI API accepts only loopback hosts and the same
+  origin (plus the allowed origins above).
 
 ## Repository layout
 

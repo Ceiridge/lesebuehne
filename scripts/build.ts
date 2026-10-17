@@ -1,9 +1,12 @@
 /**
  * `bun run build`
  * Writes the static player (Bun HTML bundler, relative ./ asset URLs) and a copy of
- * samples/** to dist/. The output runs on any static HTTP server, also under a sub-path.
+ * samples/** to dist/, plus manifest, icons and a service worker (installable, offline). The
+ * output runs on any static HTTP server, also under a sub-path.
  */
 import { $ } from 'bun';
+import { contentHash } from '@lesebuehne/core';
+import { ICON_SVG, iconPng, manifest, serviceWorker, THEME_COLOR } from './pwa.ts';
 
 const ROOT = Bun.fileURLToPath(new URL('..', import.meta.url));
 
@@ -77,7 +80,34 @@ export async function build(outdir = `${ROOT}dist`, { samplesDir = `${ROOT}sampl
     await Bun.write(`${out}/licenses/fonts/${name}.txt`, Bun.file(`${ROOT}node_modules/${pkg}/LICENSE`));
     files.push(`licenses/fonts/${name}.txt`);
   }
+  files.push(...(await writePwa(out, files)));
   return { outdir: out, files: files.sort() };
+}
+
+/** Icons, manifest, the manifest/service-worker tags in index.html, and sw.js (versioned by content). */
+async function writePwa(out: string, files: string[]): Promise<string[]> {
+  const added: Array<[string, string | Uint8Array]> = [
+    ['icons/icon.svg', ICON_SVG],
+    ['icons/icon-192.png', iconPng(192)],
+    ['icons/icon-512.png', iconPng(512)],
+    ['icons/icon-maskable-512.png', iconPng(512, { maskable: true })],
+    ['manifest.webmanifest', manifest()],
+  ];
+  for (const [path, data] of added) await Bun.write(`${out}/${path}`, data);
+  const index = `${out}/index.html`;
+  const html = await Bun.file(index).text();
+  await Bun.write(
+    index,
+    html.replace(
+      '</head>',
+      `<link rel="manifest" href="./manifest.webmanifest"><link rel="apple-touch-icon" href="./icons/icon-192.png"><meta name="theme-color" content="${THEME_COLOR}"><meta name="lb-service-worker" content="./sw.js"></head>`,
+    ),
+  );
+  const all = [...files, ...added.map(([p]) => p)].sort();
+  let digest = '';
+  for (const file of all) digest += contentHash(await Bun.file(`${out}/${file}`).text()) + file;
+  await Bun.write(`${out}/sw.js`, serviceWorker(all, contentHash(digest).slice(0, 12)));
+  return [...added.map(([p]) => p), 'sw.js'];
 }
 
 if (import.meta.main) {

@@ -164,7 +164,8 @@ export class ReaderSession {
   attachAi(backend: AiBackend | undefined): void {
     this.ai?.dispose();
     const env = this.env;
-    this.ai = backend
+    // A browser setup with only voices or images (no text model) keeps the heuristic plans.
+    this.ai = backend && backend.plans !== false
       ? new AiPlanner(
           {
             book: this.book,
