@@ -8,7 +8,8 @@ export {
   type ItemState,
   type Motion,
   type TermState,
+  type VisualOptions,
   type VisualState,
 } from './state/visual-state.ts';
 export { MIN_DWELL_MS, StageScheduler, type StageFrame } from './stage/scheduler.ts';
-export { KineticType, ListDiagram, StageView, TitleCard, Visual } from './components/visuals.tsx';
+export { KineticType, ListDiagram, QuoteCard, StageView, TitleCard, Visual } from './components/visuals.tsx';

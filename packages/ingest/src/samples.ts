@@ -8,6 +8,8 @@ export const SampleSchema = z.strictObject({
   /** Fixed language: opening a sample asks nothing (B3, B11). */
   language: z.enum(['de', 'en']),
   format: z.enum(['txt', 'md', 'epub']),
+  /** SHA-256 of the derived file (`bun run samples` verifies it). */
+  sha256: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
   provenance: z.strictObject({
     sourceUrl: z.url(),
     edition: z.string().min(1),

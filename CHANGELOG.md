@@ -1,5 +1,36 @@
 # Changelog
 
+## M2 – Providers, local server, LLM director (2026-10-17)
+
+Try it: `bun run samples && bun run dev`, open a sample; with a ChatGPT sign-in from OpenCode or the
+Codex CLI on this machine the indicator in the top bar switches to "AI". `bun run doctor` shows why
+a provider is or is not available.
+
+- Provider system with fallback chains: every provider declares its capabilities, limits and
+  availability; rate limits and repeated failures cool a provider down; usage is counted. One
+  structured-output loop for all LLM providers (JSON → schema → verbatim checks, one repair).
+- LLM providers: `codex-auth` (ChatGPT Codex backend; tokens from OpenCode, the Codex CLI or an own
+  sign-in; foreign tokens are read-only), `chatgpt-plan` (official "Sign in with ChatGPT"),
+  `openai-compatible` (OpenAI, Ollama, LM Studio …), `openrouter`, `anthropic-compatible`; the
+  heuristic director is always the last fallback.
+- LLM director: a per-book Style Bible with palette, styles and a glossary (verbatim labels, glyphs,
+  colours); section plans with diagrams, verbatim quotes, key terms, and the intent for images and
+  animations (rendered through their fallback for now); budget per chapter; cues that are not
+  verbatim in the text are dropped.
+- Stage: new quote renderer; glossary colours and glyphs on list items and key terms; every diagram
+  template renders as a list for now; highlight cues move the marker.
+- Player: finds the local server on its own origin (or a configured URL), else uses own keys in
+  this browser, else the heuristic. Plans are prefetched five minutes of listening ahead after a
+  short dwell, cached (IndexedDB in the browser, disk on the server) and crossfade in; R makes a new
+  variant. Settings → AI director shows providers, usage, sign-in and own keys; a quiet status
+  indicator sits in the top bar; the debug overlay shows provider, model, prompt version, variants
+  and dropped cues.
+- Local server: `bun run server` (static build + API), `bun run doctor`; `bun run dev` serves the API
+  on the same origin. Loopback hosts and allowed origins only; secrets never leave the server.
+- Samples are no longer committed: `bun run samples` derives them reproducibly (SHA-256 checked);
+  tests that need them are skipped without them. A test keeps personal paths, tokens, keys and
+  email addresses out of the repository.
+
 ## M1.1 – Stage polish and new views (2026-10-17)
 
 Try it: `bun run dev`, open a sample, choose "Bühne mit Untertiteln" or "Satz für Satz" in the top bar.

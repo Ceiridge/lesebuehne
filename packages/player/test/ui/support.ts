@@ -69,9 +69,7 @@ export async function makeEnv(o: { voices?: VoiceInfo[]; speech?: boolean; files
   return { env, tts, timers, library, registry, kv };
 }
 
-export async function sampleBytes(file: string): Promise<Uint8Array> {
-  return new Uint8Array(await Bun.file(new URL(`samples/${file}`, ROOT)).arrayBuffer());
-}
+export { sampleBytes } from '../../../../tests/support/samples.ts';
 
 export function bundleOf(fileName: string, bytes: Uint8Array, language = 'de'): BookBundle {
   return toBundle(ingestFile({ fileName, bytes, language }), { fileName, size: bytes.length, importedAt: new Date('2026-10-17T00:00:00Z') });

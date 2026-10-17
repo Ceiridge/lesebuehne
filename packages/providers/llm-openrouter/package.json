@@ -1,0 +1,13 @@
+{
+  "name": "@lesebuehne/llm-openrouter",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lesebuehne/core": "workspace:*",
+    "@lesebuehne/llm-openai-compatible": "workspace:*"
+  }
+}

@@ -11,20 +11,20 @@ import { decodeString } from 'micromark-util-decode-string';
 import { IngestError, ingestFile, isTxtHeading, parseSamples, toBundle } from '../src/index.ts';
 import { mapProblems } from '../../core/test/speech-check.ts';
 import { stripMarkdown, words } from './reference/md-strip.ts';
+import { sampleBytes, sampleTest, SAMPLES_DIR, withSamples } from '../../../tests/support/samples.ts';
 
 const ROOT = new URL('../../../', import.meta.url);
-const read = async (rel: string): Promise<Uint8Array> => new Uint8Array(await Bun.file(new URL(rel, ROOT)).arrayBuffer());
 const utf8 = (s: string): Uint8Array => new TextEncoder().encode(s);
 
-const kantBytes = await read('samples/aufklaerung.txt');
-const kybalionBytes = await read('samples/kybalion-chapter-2.md');
+const kantBytes = await sampleBytes('aufklaerung.txt');
+const kybalionBytes = await sampleBytes('kybalion-chapter-2.md');
 const fixtures = ['footnotes.md', 'inline.md', 'structure.md'];
 const fixtureText = Object.fromEntries(
   await Promise.all(fixtures.map(async (f) => [f, await Bun.file(new URL(`fixtures/${f}`, import.meta.url)).text()] as const)),
 );
 
-const kant = ingestFile({ fileName: 'aufklaerung.txt', bytes: kantBytes, language: 'de' });
-const kybalion = ingestFile({ fileName: 'kybalion-chapter-2.md', bytes: kybalionBytes, language: 'en' });
+const kant = withSamples(() => ingestFile({ fileName: 'aufklaerung.txt', bytes: kantBytes, language: 'de' }));
+const kybalion = withSamples(() => ingestFile({ fileName: 'kybalion-chapter-2.md', bytes: kybalionBytes, language: 'en' }));
 const md = (name: string): Book => ingestFile({ fileName: name, bytes: utf8(fixtureText[name] ?? ''), language: 'de' }).book;
 
 describe('05-1: TXT paragraphs and headings', () => {
@@ -61,7 +61,7 @@ describe('05-1: TXT paragraphs and headings', () => {
     ]);
   });
 
-  test('Kant sample: one chapter with the title heading; [1] stays plain text', () => {
+  sampleTest('Kant sample: one chapter with the title heading; [1] stays plain text', () => {
     expect(kant.book.chapters.length).toBe(1);
     const paras = bookParagraphs(kant.book);
     expect(paras[0]).toMatchObject({ kind: 'heading', displayText: 'Beantwortung der Frage: Was ist Aufklärung?' });
@@ -74,7 +74,7 @@ describe('05-1: TXT paragraphs and headings', () => {
 
 describe('05-2: TXT fidelity and stable IDs', () => {
   const cases: Array<[string, Uint8Array]> = [
-    ['Kant sample', kantBytes],
+    ...(kantBytes.length > 0 ? [['Kant sample', kantBytes] as [string, Uint8Array]] : []),
     ['BOM + CRLF', utf8('﻿Titel\r\n\r\nErste Zeile\r\nzweite  Zeile.\r\n\r\n\r\nNoch ein\tAbsatz.\r\n')],
     ['typographic spaces', utf8('Es sind 10 000 Bücher hier.\n\n  \n\nEnde.')],
   ];
@@ -86,7 +86,7 @@ describe('05-2: TXT fidelity and stable IDs', () => {
     });
   }
 
-  test('same file twice → identical IDs; another file name → same book ID', () => {
+  sampleTest('same file twice → identical IDs; another file name → same book ID', () => {
     const again = ingestFile({ fileName: 'aufklaerung.txt', bytes: kantBytes, language: 'de' });
     expect(again.book).toEqual(kant.book);
     const renamed = ingestFile({ fileName: 'kant-kopie.txt', bytes: kantBytes, language: 'de' });
@@ -149,7 +149,7 @@ describe('05-3: Markdown structure', () => {
 describe('05-4: Markdown fidelity', () => {
   const sources: Array<[string, string, Book, string]> = [
     ...fixtures.map((f): [string, string, Book, string] => [f, fixtureText[f] ?? '', md(f), 'de']),
-    ['Kybalion sample', new TextDecoder().decode(kybalionBytes), kybalion.book, 'en'],
+    ...(kybalion ? [['Kybalion sample', new TextDecoder().decode(kybalionBytes), kybalion.book, 'en'] as [string, string, Book, string]] : []),
   ];
   for (const [name, source, book] of sources) {
     test(`${name}: (a) decoded source pieces = token text`, () => {
@@ -186,20 +186,20 @@ describe('05-4: Markdown fidelity', () => {
 });
 
 describe('05-5: samples', () => {
-  test('samples.json is valid and lists both samples', async () => {
-    const samples = parseSamples(await Bun.file(new URL('samples/samples.json', ROOT)).json());
+  test('the sample catalog is valid and lists both samples', async () => {
+    const samples = parseSamples(await Bun.file(new URL('scripts/samples.catalog.json', ROOT)).json());
     expect(samples.samples.map((s) => [s.file, s.language, s.format])).toEqual([
       ['aufklaerung.txt', 'de', 'txt'],
       ['kybalion-chapter-2.md', 'en', 'md'],
     ]);
     expect(() => parseSamples({ samples: [{ ...samples.samples[0], apiKey: 'x' }] })).toThrow();
   });
-  test('no trademark string in samples/', async () => {
+  sampleTest('no trademark string in the generated samples', async () => {
     for (const f of ['aufklaerung.txt', 'kybalion-chapter-2.md', 'samples.json']) {
-      expect((await Bun.file(new URL(`samples/${f}`, ROOT)).text()).toLowerCase()).not.toContain('project gutenberg');
+      expect((await Bun.file(new URL(f, SAMPLES_DIR)).text()).toLowerCase()).not.toContain('project gutenberg');
     }
   });
-  test('Kybalion: headings, ordered list, block quotes', () => {
+  sampleTest('Kybalion: headings, ordered list, block quotes', () => {
     const paras = bookParagraphs(kybalion.book);
     const headings = paras.filter((p) => p.kind === 'heading').map((p) => p.displayText);
     expect(headings.slice(0, 3)).toEqual(['CHAPTER II', 'THE SEVEN HERMETIC PRINCIPLES', '1. The Principle of Mentalism']);
@@ -238,7 +238,7 @@ describe('05-7: offset map holds for every sentence of both samples', () => {
     ['Kant', kant],
     ['Kybalion', kybalion],
   ] as const) {
-    test(name, () => {
+    sampleTest(name, () => {
       const problems: string[] = [];
       let n = 0;
       for (const p of bookParagraphs(r.book)) {

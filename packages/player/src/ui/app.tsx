@@ -2,6 +2,7 @@ import { effect } from '@preact/signals';
 import { useEffect, useMemo } from 'preact/hooks';
 import { browserEnv, EnvContext, type AppEnv } from '../app/env.ts';
 import { applySettings, dismissToast, route, settings, toasts } from '../app/store.ts';
+import { connectAi } from '../ai/connect.ts';
 import { IconClose } from './icons.tsx';
 import { Reader } from './reader/Reader.tsx';
 import { StartPage } from './start/StartPage.tsx';
@@ -35,6 +36,7 @@ export function App({ env }: { env?: AppEnv }) {
       applySettings(s, root, appEnv.prefersDark(), languages);
       appEnv.settings.save(s);
     });
+    void connectAi(appEnv);
     const dark = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
     const onScheme = (): void => applySettings(settings.value, root, appEnv.prefersDark(), languages);
     dark?.addEventListener?.('change', onScheme);

@@ -44,3 +44,13 @@ export {
 } from './model/timeline.ts';
 export * from './bundle/manifest.ts';
 export * from './visual/plan.ts';
+export * from './visual/style.ts';
+export * from './providers/types.ts';
+export * from './providers/errors.ts';
+export * from './providers/structured.ts';
+export * from './providers/http.ts';
+export * from './providers/registry.ts';
+export * from './providers/llm-base.ts';
+export * from './providers/cache.ts';
+export * from './providers/scheduler.ts';
+export * from './providers/fake.ts';

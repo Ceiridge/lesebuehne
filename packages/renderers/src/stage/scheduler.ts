@@ -38,6 +38,11 @@ export class StageScheduler {
     this.onStageMs = 0;
   }
 
+  /** The visual on stage (null before the first tick). */
+  get currentId(): string | null {
+    return this.current;
+  }
+
   /** User navigation (jump, TOC, timeline): switch now. */
   navigate(sectionId: string, now: number): StageFrame {
     this.lastNow = now;

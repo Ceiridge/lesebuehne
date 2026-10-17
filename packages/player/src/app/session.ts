@@ -1,7 +1,21 @@
-import { buildTimeline, primaryLanguage, type Book, type BookBundle, type Section, type Timeline, type VisualPlan } from '@lesebuehne/core';
+import {
+  buildTimeline,
+  glossaryIndex,
+  primaryLanguage,
+  type Book,
+  type BookBundle,
+  type GlossaryConcept,
+  type Section,
+  type StyleBible,
+  type Timeline,
+  type VisualPlan,
+} from '@lesebuehne/core';
 import { planSection, type ForcedMode } from '@lesebuehne/director';
 import { resolveCueTimes, StageScheduler } from '@lesebuehne/renderers';
-import { batch, signal } from '@preact/signals';
+import { batch, computed, signal } from '@preact/signals';
+import { AiPlanner, type PlanInfo } from '../ai/planner.ts';
+import type { AiBackend } from '../ai/backends.ts';
+import { aiBackend } from '../ai/state.ts';
 import { PlayerEngine, type Position } from '../engine/engine.ts';
 import { selectVoice, type VoiceChoice, type VoiceInfo } from '../engine/voices.ts';
 import { autoFollow, type FollowEvent, type FollowState } from '../nav/follow.ts';
@@ -40,6 +54,19 @@ export class ReaderSession {
   readonly saved: boolean;
   readonly basicLanguage: boolean;
   readonly sections = new Map<string, Section>();
+  /** Sections in reading order. */
+  readonly order: Section[] = [];
+  /** Per-book Style Bible (LLM director), once prepared. */
+  readonly styleBible = signal<StyleBible | undefined>(undefined);
+  readonly glossary = computed<ReadonlyMap<string, GlossaryConcept>>(() => glossaryIndex(this.styleBible.value));
+  /** Where each section's plan came from (AI variants, fallbacks). */
+  readonly planInfo = signal<ReadonlyMap<string, PlanInfo>>(new Map());
+  /** LLM director, when an AI backend is available (B8). */
+  ai: AiPlanner | undefined;
+  private readonly aiPlans = new Map<string, VisualPlan>();
+  /** Plan revision per section: a new plan gets a new stage key, so the stage crossfades to it. */
+  private readonly planRev = new Map<string, number>();
+  private readonly keyPlans = new Map<string, VisualPlan>();
   private readonly cueCache = new Map<string, { plan: VisualPlan; times: number[] }>();
   private readonly assetUrls = new Map<string, string>();
 
@@ -54,7 +81,12 @@ export class ReaderSession {
     this.saved = o.saved;
     this.basicLanguage = o.basicLanguage;
     this.voices = o.voices;
-    for (const c of this.book.chapters) for (const s of c.sections) this.sections.set(s.id, s);
+    for (const c of this.book.chapters) {
+      for (const s of c.sections) {
+        this.sections.set(s.id, s);
+        this.order.push(s);
+      }
+    }
     const preferred = settings.value.voiceByLang[primaryLanguage(this.book.language)];
     const choice = env.speech ? selectVoice(o.voices, this.book.language, preferred) : ({ mode: 'silent' } as const);
     this.voiceChoice.value = choice;
@@ -72,6 +104,27 @@ export class ReaderSession {
     this.overrides.value = o.overrides;
     this.bookmarks.value = o.bookmarks;
     this.replanAll();
+    this.attachAi(aiBackend.value);
+  }
+
+  /** (Re)connects the LLM director, e.g. after the provider settings changed. */
+  attachAi(backend: AiBackend | undefined): void {
+    this.ai?.dispose();
+    const env = this.env;
+    this.ai = backend
+      ? new AiPlanner(
+          {
+            book: this.book,
+            order: this.order,
+            currentSectionId: () => this.sectionIdAt(this.engine.position.value.entryIndex),
+            planOf: (id) => this.plans.value.get(id),
+            applyPlan: (id, plan, info) => this.setAiPlan(id, plan, info),
+            applyStyle: (sb) => (this.styleBible.value = sb),
+            now: () => env.timers.now(),
+          },
+          backend,
+        )
+      : undefined;
   }
 
   static async open(env: AppEnv, library: LibraryService, bundle: BookBundle, o: OpenOptions): Promise<ReaderSession> {
@@ -88,9 +141,45 @@ export class ReaderSession {
   /** The director plans every section on open (B9), honouring the per-book forced modes. */
   private replanAll(): void {
     const plans = new Map<string, VisualPlan>();
-    for (const [id, section] of this.sections) plans.set(id, planSection(section, this.book, this.overrides.value[id] ?? 'auto'));
+    for (const [id, section] of this.sections) plans.set(id, this.effectivePlan(id, section));
     this.plans.value = plans;
     this.cueCache.clear();
+  }
+
+  /** Forced mode → heuristic with that mode; auto → the AI plan if there is one, else the heuristic. */
+  private effectivePlan(sectionId: string, section: Section): VisualPlan {
+    const forced = this.overrides.value[sectionId] ?? 'auto';
+    return (forced === 'auto' ? this.aiPlans.get(sectionId) : undefined) ?? planSection(section, this.book, forced);
+  }
+
+  private replan(sectionId: string): void {
+    const section = this.sections.get(sectionId);
+    if (!section) return;
+    const plans = new Map(this.plans.value);
+    plans.set(sectionId, this.effectivePlan(sectionId, section));
+    this.plans.value = plans;
+    const rev = (this.planRev.get(sectionId) ?? 0) + 1;
+    this.planRev.set(sectionId, rev);
+    this.keyPlans.delete(`${sectionId}@${rev - 2}`);
+  }
+
+  /** A plan from the LLM director replaces the section's plan (crossfade, dwell rule respected). */
+  setAiPlan(sectionId: string, plan: VisualPlan, info: PlanInfo): void {
+    this.aiPlans.set(sectionId, plan);
+    this.planInfo.value = new Map(this.planInfo.value).set(sectionId, info);
+    this.replan(sectionId);
+  }
+
+  /** Stage key of a section's current plan (`id` or `id@rev`). */
+  stageKey(sectionId: string): string {
+    const rev = this.planRev.get(sectionId);
+    return rev ? `${sectionId}@${rev}` : sectionId;
+  }
+
+  /** Section of a stage key. */
+  sectionOfKey(key: string): string {
+    const at = key.lastIndexOf('@');
+    return at > 0 && /^\d+$/u.test(key.slice(at + 1)) ? key.slice(0, at) : key;
   }
 
   private readonly titles = new Map<string, string>();
@@ -109,14 +198,20 @@ export class ReaderSession {
     return this.timeline.entries[entryIndex]?.sectionId;
   }
 
-  /** Plan and cue times of a section (cached until the plan changes). */
-  visualFor(sectionId: string): { plan: VisualPlan; times: number[] } | undefined {
-    const plan = this.plans.value.get(sectionId);
+  /**
+   * Plan and cue times for a stage key or section id (cached until the plan changes). An older
+   * stage key keeps its plan while it fades out.
+   */
+  visualFor(key: string): { plan: VisualPlan; times: number[] } | undefined {
+    const sectionId = this.sectionOfKey(key);
+    const current = key === this.stageKey(sectionId);
+    const plan = current ? this.plans.value.get(sectionId) : (this.keyPlans.get(key) ?? this.plans.value.get(sectionId));
     if (!plan) return undefined;
-    const cached = this.cueCache.get(sectionId);
+    if (current) this.keyPlans.set(this.stageKey(sectionId), plan);
+    const cached = this.cueCache.get(key);
     if (cached && cached.plan === plan) return cached;
     const entry = { plan, times: resolveCueTimes(plan, this.timeline) };
-    this.cueCache.set(sectionId, entry);
+    this.cueCache.set(key, entry);
     return entry;
   }
 
@@ -131,7 +226,7 @@ export class ReaderSession {
       this.followEvent('navigate');
     });
     const section = this.sectionIdAt(this.engine.position.value.entryIndex);
-    if (section) this.stage.navigate(section, this.env.timers.now());
+    if (section) this.stage.navigate(this.stageKey(section), this.env.timers.now());
   }
 
   togglePlay(): void {
@@ -153,11 +248,9 @@ export class ReaderSession {
     if (next === 'auto') delete overrides[sectionId];
     else overrides[sectionId] = next;
     this.overrides.value = overrides;
-    const plans = new Map(this.plans.value);
-    plans.set(sectionId, planSection(section, this.book, next));
-    this.plans.value = plans;
+    this.replan(sectionId);
     void this.library.setOverrides(this.book.id, overrides);
-    this.stage.navigate(sectionId, this.env.timers.now());
+    this.stage.navigate(this.stageKey(sectionId), this.env.timers.now());
     return next;
   }
 
@@ -231,6 +324,7 @@ export class ReaderSession {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.ai?.dispose();
     void this.savePosition();
     this.engine.dispose();
     for (const url of this.assetUrls.values()) URL.revokeObjectURL?.(url);

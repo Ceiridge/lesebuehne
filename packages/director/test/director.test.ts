@@ -3,12 +3,16 @@ import { assembleBook, planTextProblems, VisualPlanSchema, type BlockInput, type
 import { ingestFile } from '@lesebuehne/ingest';
 import { EPUB_CASES } from '../../ingest/test/fixtures/epub-builder.ts';
 import { planBook, planSection } from '../src/index.ts';
+import { sampleBytes, sampleTest, withSamples } from '../../../tests/support/samples.ts';
 
 const ROOT = new URL('../../../', import.meta.url);
 const bytes = async (rel: string) => new Uint8Array(await Bun.file(new URL(rel, ROOT)).arrayBuffer());
 
-const kant = ingestFile({ fileName: 'aufklaerung.txt', bytes: await bytes('samples/aufklaerung.txt'), language: 'de' }).book;
-const kybalion = ingestFile({ fileName: 'kybalion-chapter-2.md', bytes: await bytes('samples/kybalion-chapter-2.md'), language: 'en' }).book;
+const kantBytes = await sampleBytes('aufklaerung.txt');
+const kybalionBytes = await sampleBytes('kybalion-chapter-2.md');
+const kant = withSamples(() => ingestFile({ fileName: 'aufklaerung.txt', bytes: kantBytes, language: 'de' }).book);
+const kybalion = withSamples(() => ingestFile({ fileName: 'kybalion-chapter-2.md', bytes: kybalionBytes, language: 'en' }).book);
+const sampleBooks = kant && kybalion ? [kant, kybalion] : [];
 const mdFixtures = await Promise.all(
   ['footnotes.md', 'inline.md', 'structure.md'].map(async (f) =>
     ingestFile({ fileName: f, bytes: await bytes(`packages/ingest/test/fixtures/${f}`) }).book,
@@ -67,7 +71,7 @@ describe('07-1: detection and determinism', () => {
     expect(firstPlan(one([{ kind: 'text', text: 'Das ist aber so, sondern anders, jedoch nicht immer.' }])).mode).toBe('none');
   });
 
-  test('key terms skip function words and prefer section-specific nouns', () => {
+  sampleTest('key terms skip function words and prefer section-specific nouns', () => {
     const plans = [...planBook(kant).values()].flatMap((p) => p.keyTerms);
     expect(plans).toContain('Unmündigkeit');
     for (const bad of ['aber', 'sondern', 'Aber', 'Teil', 'Daher', 'Nun']) expect(plans).not.toContain(bad);
@@ -80,7 +84,7 @@ describe('07-1: detection and determinism', () => {
     expect(firstPlan(one([{ kind: 'text', text: 'Es regnet heute im Tal.' }])).mode).toBe('none');
   });
 
-  test('same input → deep-equal plans; forced modes', () => {
+  sampleTest('same input → deep-equal plans; forced modes', () => {
     expect([...planBook(kant)]).toEqual([...planBook(kant)]);
     const section = kybalion.chapters[0]!.sections.find((s) => s.paragraphs.some((p) => p.kind === 'list'))!;
     expect(planSection(section, kybalion, 'text').mode).toBe('none');
@@ -91,7 +95,7 @@ describe('07-1: detection and determinism', () => {
 
 describe('07-2: schema-valid, M1 modes only', () => {
   test('every plan of every book validates; image/quote/figure never produced', () => {
-    for (const book of [kant, kybalion, ...mdFixtures, ...epubFixtures]) {
+    for (const book of [...sampleBooks, ...mdFixtures, ...epubFixtures]) {
       for (const plan of planBook(book).values()) {
         expect(VisualPlanSchema.safeParse(plan).success).toBe(true);
         expect(['diagram', 'kinetic', 'none']).toContain(plan.mode);
@@ -104,7 +108,7 @@ describe('07-3: verbatim anchors and key terms', () => {
   test('all samples and fixtures', () => {
     const problems: string[] = [];
     let cues = 0;
-    for (const book of [kant, kybalion, ...mdFixtures, ...epubFixtures]) {
+    for (const book of [...sampleBooks, ...mdFixtures, ...epubFixtures]) {
       const sentences = new Map(
         book.chapters.flatMap((c) => c.sections.flatMap((s) => s.paragraphs.flatMap((p) => p.sentences.map((x) => [x.id, x.text] as const)))),
       );
@@ -117,13 +121,13 @@ describe('07-3: verbatim anchors and key terms', () => {
         }
       }
     }
-    expect(cues).toBeGreaterThan(20);
+    expect(cues).toBeGreaterThan(sampleBooks.length > 0 ? 20 : 5);
     expect(problems).toEqual([]);
   });
 });
 
 describe('07-4: Kybalion seven-item list', () => {
-  test('list diagram with 7 reveal cues', () => {
+  sampleTest('list diagram with 7 reveal cues', () => {
     const plans = [...planBook(kybalion).values()];
     const list = plans.find((p) => p.diagram?.items.length === 7)!;
     expect(list.mode).toBe('diagram');

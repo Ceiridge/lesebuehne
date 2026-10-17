@@ -15,3 +15,6 @@ out/
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# Sample books are generated locally by `bun run samples` (catalog: scripts/samples.catalog.json)
+/samples/

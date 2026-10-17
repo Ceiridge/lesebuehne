@@ -1,6 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { $ } from 'bun';
 import { build } from '../scripts/build.ts';
+import { SAMPLES_PRESENT } from './support/samples.ts';
 
 const ROOT = Bun.fileURLToPath(new URL('..', import.meta.url));
 const TMP = `${ROOT}out/tmp/build-test-${crypto.randomUUID()}`;
@@ -56,7 +57,7 @@ describe('16-1: release build check', () => {
       expect(files.some((f) => f.startsWith(family) && f.endsWith('.woff2'))).toBe(true);
       expect(files).toContain(`licenses/fonts/${family}.txt`);
     }
-    for (const f of ['samples/samples.json', 'samples/aufklaerung.txt', 'samples/kybalion-chapter-2.md']) expect(files).toContain(f);
+    if (SAMPLES_PRESENT) for (const f of ['samples/samples.json', 'samples/aufklaerung.txt', 'samples/kybalion-chapter-2.md']) expect(files).toContain(f);
     const html = await Bun.file(`${outdir}/index.html`).text();
     const css = (await Promise.all(files.filter((f) => f.endsWith('.css')).map((f) => Bun.file(`${outdir}/${f}`).text()))).join('\n');
     const remote = [

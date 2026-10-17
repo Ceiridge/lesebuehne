@@ -130,6 +130,7 @@ const HELP_ROWS: Array<[string[], MessageKey]> = [
   [['M'], 'help.toc'],
   [['B'], 'help.bookmark'],
   [['D'], 'help.debug'],
+  [['R'], 'help.regenerate'],
   [['?'], 'help.help'],
   [['Esc'], 'help.close'],
 ];

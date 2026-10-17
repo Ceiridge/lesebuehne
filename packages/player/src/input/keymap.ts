@@ -15,6 +15,7 @@ export type Action =
   | 'open-toc'
   | 'toggle-bookmark'
   | 'toggle-debug'
+  | 'regenerate'
   | 'open-help'
   | 'close';
 
@@ -51,6 +52,7 @@ const LETTERS: Readonly<Record<string, Action>> = {
   m: 'open-toc',
   b: 'toggle-bookmark',
   d: 'toggle-debug',
+  r: 'regenerate',
   k: 'prev-paragraph',
   j: 'next-paragraph',
 };

@@ -7,6 +7,7 @@ import { t, type MessageKey } from '../../i18n/i18n.ts';
 import { FONT_IDS, LIMITS, type Settings } from '../../settings/settings.ts';
 import { IconSpeaker } from '../icons.tsx';
 import { setTempo } from './Controls.tsx';
+import { AiSettings } from './AiSettings.tsx';
 import { Drawer } from './Panels.tsx';
 
 function update(patch: Partial<Settings>): void {
@@ -171,6 +172,8 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
           ))}
         </div>
       </div>
+
+      <AiSettings session={session} />
 
       <h3 class="settings-group">{t('settings.language')}</h3>
       <Segmented field="uiLanguage" label="settings.language" options={['auto', 'de', 'en']} />

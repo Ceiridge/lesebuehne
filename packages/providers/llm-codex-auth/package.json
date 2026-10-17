@@ -1,0 +1,12 @@
+{
+  "name": "@lesebuehne/llm-codex-auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lesebuehne/core": "workspace:*"
+  }
+}

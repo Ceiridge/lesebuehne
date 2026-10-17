@@ -20,6 +20,10 @@ export interface AppEnv {
   highlighter: () => Highlighter;
   /** Whether the OS asks for dark colours / reduced motion. */
   prefersDark: () => boolean;
+  /** Full HTTP (AI server and BYOK providers); undefined → no AI (tests, B8). */
+  http?: (url: string, init?: RequestInit) => Promise<Response>;
+  /** IndexedDB for the AI result cache (browser mode). */
+  indexedDB?: IDBFactory;
 }
 
 function media(query: string): boolean {
@@ -59,6 +63,8 @@ export function browserEnv(): AppEnv {
     timers: realTimers,
     highlighter: () => Highlighter.forDocument(),
     prefersDark: () => media('(prefers-color-scheme: dark)'),
+    http: (url, init) => fetch(url, init),
+    ...(typeof indexedDB === 'undefined' ? {} : { indexedDB }),
   };
 }
 

@@ -28,12 +28,13 @@ import {
 } from '../../src/nav/navigation.ts';
 import { defaultSettings } from '../../src/settings/settings.ts';
 import { voice } from '../support/fake-tts.ts';
+import { sampleTest } from '../../../../tests/support/samples.ts';
 import { bundleOf, flush, makeEnv, openSession, sampleBytes, type TestEnv } from './support.ts';
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const kantBytes = await sampleBytes('aufklaerung.txt');
 const kybalionBytes = await sampleBytes('kybalion-chapter-2.md');
-const samplesJson = await Bun.file(new URL('../../../../samples/samples.json', import.meta.url)).text();
+const samplesJson = await Bun.file(new URL('../../../../scripts/samples.catalog.json', import.meta.url)).text();
 const hedda = voice('hedda', 'de-DE');
 
 function mount(t: TestEnv, node: preact.ComponentChild): HTMLElement {
@@ -56,7 +57,7 @@ describe('12-1: import service', () => {
     expect(needsLanguage('a.epub', EPUB_CASES['no-language']!())).toBe(true);
     expect(needsLanguage('a.pdf', enc('x'))).toBe(false);
   });
-  test('errors (incl. DRM) store nothing; basic language flag; same book reopens', async () => {
+  sampleTest('errors (incl. DRM) store nothing; basic language flag; same book reopens', async () => {
     const t = await makeEnv();
     expect(await importBook(t.library, { fileName: 'a.pdf', bytes: enc('x') })).toEqual({ ok: false, code: 'unsupported' });
     expect(await importBook(t.library, { fileName: 'drm.epub', bytes: EPUB_CASES.encrypted!() })).toEqual({ ok: false, code: 'drm' });
@@ -78,7 +79,7 @@ describe('12-2: start page', () => {
   beforeAll(() => {
     (globalThis as { confirm?: () => boolean }).confirm = () => true;
   });
-  test('samples listed and openable; library lists imported books; delete removes', async () => {
+  sampleTest('samples listed and openable; library lists imported books; delete removes', async () => {
     const t = await makeEnv({ voices: [hedda], files: { 'samples/samples.json': samplesJson, 'samples/aufklaerung.txt': kantBytes } });
     const host = mount(t, <App env={t.env} />);
     await flush(10);
@@ -151,7 +152,7 @@ describe('13-1/13-2: highlighting and text rendering', () => {
     expect(el2.hasAttribute('data-cur-word')).toBe(true);
   });
 
-  test('every token of the Kant sample maps to an element with its text; MD markers after the carrying token', async () => {
+  sampleTest('every token of the Kant sample maps to an element with its text; MD markers after the carrying token', async () => {
     const t = await makeEnv({ voices: [hedda] });
     const session = await openSession(t, bundleOf('aufklaerung.txt', kantBytes));
     const host = mount(t, <Reader session={session} />);
@@ -180,7 +181,7 @@ describe('13-1/13-2: highlighting and text rendering', () => {
 
 describe('13-3: mounted reader', () => {
   withDom();
-  test('Space speaks; paused click moves without speaking; position saved; lang; no DOM mutation per word', async () => {
+  sampleTest('Space speaks; paused click moves without speaking; position saved; lang; no DOM mutation per word', async () => {
     const t = await makeEnv({ voices: [hedda] });
     const session = await openSession(t, bundleOf('aufklaerung.txt', kantBytes));
     const host = mount(t, <Reader session={session} />);
@@ -221,7 +222,7 @@ describe('13-3: mounted reader', () => {
 });
 
 describe('13-4: notices', () => {
-  test('silent, no voice for the language, estimated hint with per-voice dismissal, basic language, not saved', async () => {
+  sampleTest('silent, no voice for the language, estimated hint with per-voice dismissal, basic language, not saved', async () => {
     const silent = await makeEnv({ speech: false });
     const s1 = await openSession(silent, bundleOf('aufklaerung.txt', kantBytes), false, true);
     expect(readerNotices(s1).map((n) => n.kind)).toEqual(['silent', 'basicLanguage', 'notSaved']);
@@ -330,7 +331,7 @@ describe('14: navigation, keys, timeline, auto-follow', () => {
 
 describe('15: settings, stage, layout, popover, debug, a11y', () => {
   withDom();
-  test('15-1: settings apply live; voice list marks matching voices, local first; reset', async () => {
+  sampleTest('15-1: settings apply live; voice list marks matching voices, local first; reset', async () => {
     const root = document.documentElement;
     applySettings({ ...defaultSettings(), theme: 'sepia', fontSize: 26, motion: 'none' }, root, false);
     expect(root.dataset.theme).toBe('sepia');
@@ -357,7 +358,7 @@ describe('15: settings, stage, layout, popover, debug, a11y', () => {
     render(null, host);
   });
 
-  test('15-2: stage step renders the visual state of the section at τ with dwell and forced mode', async () => {
+  sampleTest('15-2: stage step renders the visual state of the section at τ with dwell and forced mode', async () => {
     const t = await makeEnv({ voices: [voice('en', 'en-US')] });
     const s = await openSession(t, bundleOf('kybalion-chapter-2.md', kybalionBytes, 'en'));
     expect(s.plans.value.size).toBe(s.sections.size);
@@ -418,7 +419,7 @@ describe('15: settings, stage, layout, popover, debug, a11y', () => {
 
 describe('views: subtitles, cinema, sentence by sentence', () => {
   withDom();
-  test('subtitle cues cover the sentence in order, at most ~96 characters, breaking at clauses', async () => {
+  sampleTest('subtitle cues cover the sentence in order, at most ~96 characters, breaking at clauses', async () => {
     const t = await makeEnv({ voices: [hedda] });
     const s = await openSession(t, bundleOf('aufklaerung.txt', kantBytes));
     for (const e of s.timeline.entries) {
@@ -432,7 +433,7 @@ describe('views: subtitles, cinema, sentence by sentence', () => {
       }
     }
   });
-  test('cinema shows stage + subtitles without the text pane; sentence view shows the current sentence; S toggles subtitles', async () => {
+  sampleTest('cinema shows stage + subtitles without the text pane; sentence view shows the current sentence; S toggles subtitles', async () => {
     const t = await makeEnv({ voices: [hedda] });
     const s = await openSession(t, bundleOf('aufklaerung.txt', kantBytes));
     settings.value = { ...settings.value, layout: 'cinema' };

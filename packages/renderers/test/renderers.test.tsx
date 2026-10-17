@@ -4,6 +4,7 @@ import { planBook } from '@lesebuehne/director';
 import { ingestFile } from '@lesebuehne/ingest';
 import { render } from 'preact';
 import { withDom } from '../../../tests/support/with-dom.ts';
+import { sampleBytes, sampleTest, SAMPLES_PRESENT } from '../../../tests/support/samples.ts';
 import {
   cueProgress,
   REVEAL_SECONDS,
@@ -17,8 +18,8 @@ import {
 
 const ROOT = new URL('../../../', import.meta.url);
 const load = async (file: string, language: string): Promise<Book> =>
-  ingestFile({ fileName: file, bytes: new Uint8Array(await Bun.file(new URL(`samples/${file}`, ROOT)).arrayBuffer()), language }).book;
-const books = [await load('aufklaerung.txt', 'de'), await load('kybalion-chapter-2.md', 'en')];
+  ingestFile({ fileName: file, bytes: await sampleBytes(file), language }).book;
+const books = SAMPLES_PRESENT ? [await load('aufklaerung.txt', 'de'), await load('kybalion-chapter-2.md', 'en')] : [];
 
 const listPlan: VisualPlan = {
   version: 't',
@@ -40,7 +41,7 @@ const kineticPlan: VisualPlan = {
 const times = [2, 5, 9];
 
 describe('08-1: cue times', () => {
-  test('inside their sentence span, non-decreasing, for every director plan of both samples', () => {
+  sampleTest('inside their sentence span, non-decreasing, for every director plan of both samples', () => {
     let n = 0;
     for (const book of books) {
       const timeline = buildTimeline(book);

@@ -153,7 +153,16 @@ describe('04-1: schemas', () => {
       fallback: 'kinetic',
     };
     expect(VisualPlanSchema.safeParse(list).success).toBe(true);
-    for (const mode of ['kinetic', 'none', 'image', 'quote', 'figure']) {
+    const quote = { sentenceId: 's1', phrase: 'Mut' };
+    const image = { prompt: 'p', aspect: '16:9' as const, focusRegions: [{ id: 'r', label: 'x', x: 0, y: 0, w: 1, h: 1 }] };
+    expect(VisualPlanSchema.safeParse({ ...list, mode: 'quote', diagram: undefined, cues: [], quote }).success).toBe(true);
+    expect(VisualPlanSchema.safeParse({ ...list, mode: 'quote', diagram: undefined, cues: [] }).success).toBe(false);
+    expect(VisualPlanSchema.safeParse({ ...list, mode: 'image', diagram: undefined, cues: [], image }).success).toBe(true);
+    expect(VisualPlanSchema.safeParse({ ...list, mode: 'animation', animation: { brief: 'b' } }).success).toBe(true);
+    expect(
+      VisualPlanSchema.safeParse({ ...list, mode: 'image', diagram: undefined, image, cues: [{ anchor: { sentenceId: 's', phrase: 'x' }, action: { type: 'focus', regionId: 'zz' } }] }).success,
+    ).toBe(false);
+    for (const mode of ['kinetic', 'none', 'figure']) {
       expect(VisualPlanSchema.safeParse({ ...list, mode, diagram: undefined, cues: [] }).success).toBe(true);
     }
     expect(VisualPlanSchema.safeParse({ ...list, mode: 'video' }).success).toBe(false);

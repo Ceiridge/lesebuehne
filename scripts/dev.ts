@@ -1,10 +1,12 @@
 /**
  * `bun run dev [-- --port <n>]`
  * Development server on 127.0.0.1 only: bundles packages/player/index.html on request
- * (HTML import) and serves the sample files under /samples/*. Prints the URL.
+ * (HTML import), serves the sample files under /samples/* and the local API under /api/* (same
+ * origin, so the player finds it). Prints the URL.
  */
 import type { Server } from 'bun';
 import index from '../packages/player/index.html';
+import { createLocalApi } from '@lesebuehne/server';
 import { LOCAL_HOST, parseCliArgs, parsePort, requestPath, serveFileFrom } from './preview.ts';
 
 const ROOT = Bun.fileURLToPath(new URL('..', import.meta.url));
@@ -16,14 +18,18 @@ export interface DevOptions {
   port?: number;
   /** Directory served under /samples/ (default `<repo>/samples`). */
   samplesDir?: string;
+  /** Local API mounted under /api/ (omitted: no API, the player falls back to the browser). */
+  api?: { handle(req: Request): Promise<Response> };
 }
 
 /** Starts the dev server on 127.0.0.1. */
-export function startDev({ port = DEFAULT_DEV_PORT, samplesDir = `${ROOT}samples` }: DevOptions = {}): Server<undefined> {
+export function startDev({ port = DEFAULT_DEV_PORT, samplesDir = `${ROOT}samples`, api }: DevOptions = {}): Server<undefined> {
   return Bun.serve({
     hostname: LOCAL_HOST,
     port,
     development: true,
+    // LLM calls and SSE streams outlive Bun's default idle timeout.
+    idleTimeout: 0,
     routes: {
       '/': index,
       '/samples/*': (req) => {
@@ -31,7 +37,8 @@ export function startDev({ port = DEFAULT_DEV_PORT, samplesDir = `${ROOT}samples
         return serveFileFrom(samplesDir, target.slice('/samples/'.length), req.method);
       },
     },
-    fetch() {
+    fetch(req) {
+      if (api && requestPath(req).startsWith('/api/')) return api.handle(req);
       return new Response('Not Found', { status: 404 });
     },
   });
@@ -45,6 +52,8 @@ if (import.meta.main) {
     console.error(e instanceof Error ? e.message : String(e));
     process.exit(2);
   }
-  const server = startDev({ port });
+  const { api, loaded } = await createLocalApi(ROOT);
+  const server = startDev({ port, api });
+  console.log(`API: providers from ${loaded.files.join(', ') || 'defaults'} (bun run doctor for status)`);
   console.log(`Dev server: http://${LOCAL_HOST}:${server.port}/`);
 }

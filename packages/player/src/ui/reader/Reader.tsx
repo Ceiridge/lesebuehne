@@ -8,6 +8,7 @@ import { nextParagraph, nextSection, nextSentence, prevParagraph, prevSection, p
 import { TEMPO_STEP } from '../../engine/engine.ts';
 import type { Settings } from '../../settings/settings.ts';
 import { IconBack, IconBookmark, IconCinema, IconFocus, IconHelp, IconPage, IconSentence, IconSettings, IconStage, IconSubtitles, IconToc } from '../icons.tsx';
+import { AiIndicator } from './AiIndicator.tsx';
 import { Controls, setTempo } from './Controls.tsx';
 import { Notices } from './Notices.tsx';
 import { BookmarksPanel, FootnotePopover, HelpPanel, TocPanel } from './Panels.tsx';
@@ -85,6 +86,16 @@ export function dispatch(session: ReaderSession, action: Action): boolean {
     case 'toggle-debug':
       session.debug.value = !session.debug.value;
       return true;
+    case 'regenerate': {
+      const sectionId = session.sectionIdAt(p.entryIndex);
+      if (!session.ai || !sectionId) {
+        toast(t('ai.unavailable'), 'info', 2400);
+        return true;
+      }
+      toast(t('ai.regenerating'), 'info', 1800);
+      void session.ai.regenerate(sectionId);
+      return true;
+    }
     case 'open-help':
       session.panel.value = 'help';
       return true;
@@ -121,6 +132,7 @@ export function Reader({ session }: { session: ReaderSession }) {
     let raf = 0;
     const loop = (): void => {
       if (session.engine.playing.value) session.engine.frame(session.env.timers.now());
+      session.ai?.tick();
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
@@ -165,6 +177,7 @@ export function Reader({ session }: { session: ReaderSession }) {
           {chapter?.title && chapter.title !== session.book.title ? <span class="topbar-chapter">{chapter.title}</span> : null}
         </div>
         <div class="topbar-actions">
+          <AiIndicator onOpen={() => (session.panel.value = 'settings')} />
           <div class="segmented compact" role="radiogroup" aria-label={t('reader.layout')}>
             {LAYOUTS.map(({ id, icon: Icon, label }) => (
               <button key={id} type="button" role="radio" aria-checked={layout === id} aria-label={t(label)} title={t(label)} onClick={() => (settings.value = { ...settings.value, layout: id })}>

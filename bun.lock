@@ -57,6 +57,9 @@
         "@lesebuehne/core": "workspace:*",
         "@lesebuehne/director": "workspace:*",
         "@lesebuehne/ingest": "workspace:*",
+        "@lesebuehne/llm-anthropic-compatible": "workspace:*",
+        "@lesebuehne/llm-openai-compatible": "workspace:*",
+        "@lesebuehne/llm-openrouter": "workspace:*",
         "@lesebuehne/renderers": "workspace:*",
         "@preact/signals": "2.11.3",
         "preact": "10.29.8",
@@ -64,6 +67,42 @@
       },
       "devDependencies": {
         "fake-indexeddb": "6.2.5",
+      },
+    },
+    "packages/providers/llm-anthropic-compatible": {
+      "name": "@lesebuehne/llm-anthropic-compatible",
+      "version": "0.0.0",
+      "dependencies": {
+        "@lesebuehne/core": "workspace:*",
+      },
+    },
+    "packages/providers/llm-chatgpt-plan": {
+      "name": "@lesebuehne/llm-chatgpt-plan",
+      "version": "0.0.0",
+      "dependencies": {
+        "@lesebuehne/core": "workspace:*",
+      },
+    },
+    "packages/providers/llm-codex-auth": {
+      "name": "@lesebuehne/llm-codex-auth",
+      "version": "0.0.0",
+      "dependencies": {
+        "@lesebuehne/core": "workspace:*",
+      },
+    },
+    "packages/providers/llm-openai-compatible": {
+      "name": "@lesebuehne/llm-openai-compatible",
+      "version": "0.0.0",
+      "dependencies": {
+        "@lesebuehne/core": "workspace:*",
+      },
+    },
+    "packages/providers/llm-openrouter": {
+      "name": "@lesebuehne/llm-openrouter",
+      "version": "0.0.0",
+      "dependencies": {
+        "@lesebuehne/core": "workspace:*",
+        "@lesebuehne/llm-openai-compatible": "workspace:*",
       },
     },
     "packages/renderers": {
@@ -76,6 +115,20 @@
       "devDependencies": {
         "@lesebuehne/director": "workspace:*",
         "@lesebuehne/ingest": "workspace:*",
+      },
+    },
+    "packages/server": {
+      "name": "@lesebuehne/server",
+      "version": "0.0.0",
+      "dependencies": {
+        "@lesebuehne/core": "workspace:*",
+        "@lesebuehne/director": "workspace:*",
+        "@lesebuehne/llm-anthropic-compatible": "workspace:*",
+        "@lesebuehne/llm-chatgpt-plan": "workspace:*",
+        "@lesebuehne/llm-codex-auth": "workspace:*",
+        "@lesebuehne/llm-openai-compatible": "workspace:*",
+        "@lesebuehne/llm-openrouter": "workspace:*",
+        "zod": "4.6.5",
       },
     },
   },
@@ -94,9 +147,21 @@
 
     "@lesebuehne/ingest": ["@lesebuehne/ingest@workspace:packages/ingest"],
 
+    "@lesebuehne/llm-anthropic-compatible": ["@lesebuehne/llm-anthropic-compatible@workspace:packages/providers/llm-anthropic-compatible"],
+
+    "@lesebuehne/llm-chatgpt-plan": ["@lesebuehne/llm-chatgpt-plan@workspace:packages/providers/llm-chatgpt-plan"],
+
+    "@lesebuehne/llm-codex-auth": ["@lesebuehne/llm-codex-auth@workspace:packages/providers/llm-codex-auth"],
+
+    "@lesebuehne/llm-openai-compatible": ["@lesebuehne/llm-openai-compatible@workspace:packages/providers/llm-openai-compatible"],
+
+    "@lesebuehne/llm-openrouter": ["@lesebuehne/llm-openrouter@workspace:packages/providers/llm-openrouter"],
+
     "@lesebuehne/player": ["@lesebuehne/player@workspace:packages/player"],
 
     "@lesebuehne/renderers": ["@lesebuehne/renderers@workspace:packages/renderers"],
+
+    "@lesebuehne/server": ["@lesebuehne/server@workspace:packages/server"],
 
     "@preact/signals": ["@preact/signals@2.11.3", "", { "dependencies": { "@preact/signals-core": "^1.14.4" }, "peerDependencies": { "preact": ">= 10.25.0 || >=11.0.0-0" } }, "sha512-mttwFM98G/JiriTgMwU+UWygL6sfVmYEiNcPSKkUnv4PxPpZhmP2ugGC4qi360+ZIHyQ8NY05bfJT3b4RUIGlw=="],
 

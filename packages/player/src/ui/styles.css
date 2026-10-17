@@ -790,6 +790,62 @@ kbd {
   color: var(--c-stage-accent);
   font-size: clamp(30px, 4.6vw, 64px);
 }
+/* Glossary colour (Style Bible) overrides the stage accent per item or term. */
+.lb-list-item[style*='--lb-concept'] .lb-list-index {
+  background: var(--lb-concept);
+}
+.lb-list-item[style*='--lb-concept'].is-current {
+  border-color: var(--lb-concept);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lb-concept) 20%, transparent);
+}
+.lb-term[style*='--lb-concept'].is-current {
+  color: var(--lb-concept);
+}
+.lb-term-glyph {
+  margin-right: 0.3em;
+  font-size: 0.8em;
+}
+.lb-list-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.lb-list-group {
+  color: color-mix(in srgb, var(--c-stage-text) 60%, transparent);
+  font: 700 11px/1.3 var(--font-ui);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lb-list-detail {
+  color: color-mix(in srgb, var(--c-stage-text) 70%, transparent);
+  font-size: 0.82em;
+}
+/* Templates without their own renderer yet: arrows show sequence for chains and processes. */
+.lb-template-causal-chain .lb-list-item:not(:last-child)::after,
+.lb-template-process .lb-list-item:not(:last-child)::after,
+.lb-template-timeline .lb-list-item:not(:last-child)::after {
+  content: '↓';
+  margin-left: auto;
+  color: var(--c-stage-accent);
+  opacity: 0.6;
+}
+.lb-quote {
+  position: relative;
+  max-width: 30ch;
+  padding: 0 0 0 0.9em;
+  font: italic 500 clamp(22px, 3vw, 40px) / 1.3 var(--font-reading);
+  text-wrap: balance;
+  transition: opacity var(--dur-base);
+}
+.lb-quote-mark {
+  position: absolute;
+  left: -0.15em;
+  top: -0.3em;
+  color: var(--c-stage-accent);
+  font-size: 2.4em;
+  line-height: 1;
+  opacity: 0.5;
+}
 .lb-none {
   width: 40%;
   height: 2px;
@@ -1719,4 +1775,143 @@ kbd {
   .reader[data-layout='cinema'] .stage {
     margin: 8px;
   }
+}
+
+/* ---------- AI director (M2) ---------- */
+
+.ai-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin-right: 8px;
+  padding: 0 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--c-muted);
+  font: 600 12px var(--font-ui);
+  cursor: pointer;
+}
+.ai-indicator:hover {
+  color: var(--c-text);
+}
+.ai-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c-border);
+}
+.ai-indicator.is-ready .ai-dot {
+  background: var(--c-accent);
+}
+.ai-indicator.is-working .ai-dot {
+  background: var(--c-accent);
+  animation: ai-pulse 1.2s ease-in-out infinite;
+}
+.ai-indicator.is-limited .ai-dot {
+  background: #c98a1b;
+}
+@keyframes ai-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+:root[data-motion='none'] .ai-indicator.is-working .ai-dot {
+  animation: none;
+}
+.field-hint {
+  margin: 0;
+  color: var(--c-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.field-label.small {
+  font-size: 13px;
+  font-weight: 500;
+}
+.field input[type='text'],
+.field input[type='url'],
+.field input[type='password'] {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 8px;
+  background: var(--c-surface);
+  color: var(--c-text);
+  font: 14px var(--font-ui);
+}
+.btn.small {
+  min-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.provider-list,
+.byok-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.provider-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+}
+.provider-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c-border);
+}
+.provider-list .is-ok .provider-dot {
+  background: var(--c-accent);
+}
+.provider-text {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+}
+.provider-name {
+  font-weight: 600;
+}
+.provider-meta {
+  overflow-wrap: anywhere;
+  color: var(--c-muted);
+  font-size: 13px;
+}
+.byok-list li {
+  padding: 8px 10px;
+  border: 1px solid var(--c-border);
+  border-radius: 10px;
+}
+.byok-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+.byok-fields {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.byok-fields .btn {
+  justify-self: start;
+}
+.debug-actions {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0;
 }

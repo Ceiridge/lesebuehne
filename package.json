@@ -4,14 +4,18 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "packages/providers/*"
   ],
   "scripts": {
     "dev": "bun scripts/dev.ts",
     "build": "bun scripts/build.ts",
     "preview": "bun scripts/preview.ts",
     "typecheck": "tsc -p . --noEmit",
-    "fixtures": "bun scripts/fixtures.ts"
+    "fixtures": "bun scripts/fixtures.ts",
+    "samples": "bun scripts/samples.ts",
+    "server": "bun scripts/server.ts",
+    "doctor": "bun scripts/doctor.ts"
   },
   "devDependencies": {
     "@types/bun": "1.4.3",

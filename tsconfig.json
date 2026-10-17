@@ -1,7 +1,11 @@
 {
   "compilerOptions": {
     "target": "ESNext",
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "moduleResolution": "bundler",
     "moduleDetection": "force",
@@ -10,7 +14,9 @@
     "isolatedModules": true,
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
-    "types": ["bun"],
+    "types": [
+      "bun"
+    ],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
@@ -18,5 +24,13 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["packages/*/src", "packages/*/test", "scripts", "tests"]
+  "include": [
+    "packages/*/src",
+    "packages/*/test",
+    "packages/providers/*/src",
+    "packages/providers/*/test",
+    "scripts",
+    "tests",
+    "lesebuehne.config.ts"
+  ]
 }

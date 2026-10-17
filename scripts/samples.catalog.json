@@ -1,0 +1,45 @@
+{
+  "samples": [
+    {
+      "id": "aufklaerung",
+      "file": "aufklaerung.txt",
+      "title": "Beantwortung der Frage: Was ist Aufklärung?",
+      "author": "Immanuel Kant",
+      "language": "de",
+      "format": "txt",
+      "provenance": {
+        "sourceUrl": "https://www.gutenberg.org/cache/epub/30821/pg30821.txt",
+        "edition": "Text of Immanuel Kants Werke, Band IV, ed. Artur Buchenau and Ernst Cassirer, Berlin: Bruno Cassirer 1913, pp. 167-176 (first published in Berlinische Monatsschrift, December 1784); eBook #30821, release 2009-12-31, updated 2021-01-05",
+        "retrieved": "2026-10-17",
+        "licence": "Public domain. All header, footer and licence text of the distributing site and every reference to its trademark are removed, as its licence permits for public-domain text distributed without the trademark.",
+        "edits": [
+          "Kept only the lines from the title 'Beantwortung der Frage: Was ist Aufklärung?' to the end of Kant's footnote [1]; removed everything before (header, 'Produced by' line, bracketed transcription notes) and after (the 1913 'Lesarten' apparatus, the bracketed list of corrected lines, the footer).",
+          "Removed the transcriber's emphasis markers '=' (letter-spaced in the original) and '_' (italic in the original); no word was changed, added or reordered.",
+          "Converted line endings to LF; editorial line breaks and indentation kept."
+        ]
+      },
+      "sha256": "1a4d340d6060548da0b4fd99ef29c35cb132f8acccb342e733ecca2ba94b851e"
+    },
+    {
+      "id": "kybalion-chapter-2",
+      "file": "kybalion-chapter-2.md",
+      "title": "The Kybalion, Chapter II: The Seven Hermetic Principles",
+      "author": "Three Initiates",
+      "language": "en",
+      "format": "md",
+      "provenance": {
+        "sourceUrl": "https://www.gutenberg.org/cache/epub/14209/pg14209.txt",
+        "edition": "The Kybalion: A Study of the Hermetic Philosophy of Ancient Egypt and Greece, by Three Initiates, Chicago: The Yogi Publication Society; the eBook reproduces the printing marked 'COPYRIGHT 1912' (first published 1908); eBook #14209, release 2004-11-29, updated 2024-10-28",
+        "retrieved": "2026-10-17",
+        "licence": "Public domain. All header, footer and licence text of the distributing site and every reference to its trademark are removed, as its licence permits for public-domain text distributed without the trademark.",
+        "edits": [
+          "Kept only Chapter II, from the line 'CHAPTER II' to the line before 'CHAPTER III'.",
+          "Added Markdown syntax only: '# ' before 'CHAPTER II', '## ' before 'THE SEVEN HERMETIC PRINCIPLES', '### ' before the seven sub-headings '1.  The Principle of Mentalism' to '7.  The Principle of Gender'.",
+          "The indented seven-item enumeration became an ordered list (indentation removed); the other indented passages (quotations from The Kybalion) became block quotes ('> ' replaces the four-space indentation).",
+          "Converted line endings to LF; no word was changed, added or reordered."
+        ]
+      },
+      "sha256": "c1825c56d3186a226c1d85f91db94ef2d04009ab6c916f26949bc74f11caf326"
+    }
+  ]
+}

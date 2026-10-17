@@ -1,0 +1,19 @@
+{
+  "name": "@lesebuehne/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lesebuehne/core": "workspace:*",
+    "@lesebuehne/director": "workspace:*",
+    "@lesebuehne/llm-anthropic-compatible": "workspace:*",
+    "@lesebuehne/llm-chatgpt-plan": "workspace:*",
+    "@lesebuehne/llm-codex-auth": "workspace:*",
+    "@lesebuehne/llm-openai-compatible": "workspace:*",
+    "@lesebuehne/llm-openrouter": "workspace:*",
+    "zod": "4.6.5"
+  }
+}
