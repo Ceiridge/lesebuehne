@@ -2,6 +2,7 @@
  * `bun run doctor`
  * Prints every provider's availability and configuration problems. Never prints secrets.
  */
+import type { TTSProvider } from '@lesebuehne/core';
 import { createLocalApi } from '@lesebuehne/server';
 
 const ROOT = Bun.fileURLToPath(new URL('..', import.meta.url));
@@ -11,7 +12,9 @@ if (import.meta.main) {
   const { registry, chain } = context.providers;
   console.log(`Config: ${loaded.files.join(', ') || 'defaults only'}`);
   console.log(`Data directory: ${loaded.dataDir}`);
-  console.log(`LLM chain: ${[...chain, 'heuristic'].join(' → ')}\n`);
+  console.log(`LLM chain: ${[...chain, 'heuristic'].join(' → ')}`);
+  const tts = registry.list('tts') as TTSProvider[];
+  console.log(`TTS voices: ${tts.length ? tts.flatMap((p) => p.voices.map((v) => `${p.id}:${v.id}`)).join(', ') : 'none configured (browser voices only)'}\n`);
   let usable = 0;
   for (const p of registry.list()) {
     const a = await registry.available(p.id, true);

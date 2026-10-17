@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import * as z from 'zod';
 import type { ServerConfig } from './config.ts';
 import type { ProviderSetup } from './providers.ts';
+import { TtsService } from './tts.ts';
 
 export const SERVER_VERSION = '0.2.0';
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -76,6 +77,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     return parsed.data;
   }
 
+  const tts = new TtsService(registry, join(ctx.dataDir, 'cache', 'tts'));
   const director = new DirectorService({
     complete: registryComplete(registry, chain, ctx.providers.taskModel),
     cache: ctx.cache,
@@ -169,6 +171,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
           coolingUntil: s?.coolingUntil ?? null,
           source: p instanceof CodexAuthLLM ? (p.lastSource ?? null) : null,
           login: p.id === 'codex-auth' || p.id === 'chatgpt-plan',
+          ...(p.kind === 'tts' ? { voices: p.voices } : {}),
         };
       }),
     );
@@ -257,7 +260,13 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     const origin = allowed(req);
     if (origin === false) return fail(403, 'forbidden-origin');
     const cors: Record<string, string> = origin
-      ? { 'access-control-allow-origin': origin, vary: 'origin', 'access-control-allow-headers': 'content-type', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' }
+      ? {
+          'access-control-allow-origin': origin,
+          vary: 'origin',
+          'access-control-allow-headers': 'content-type',
+          'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
+          'access-control-expose-headers': 'x-lb-words, x-lb-provider, x-lb-cached',
+        }
       : {};
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
     const path = new URL(req.url).pathname;
@@ -269,6 +278,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     else if (req.method === 'POST' && path === '/api/llm/plan') res = await plan(req);
     else if (req.method === 'POST' && path === '/api/llm/prepare') res = await prepare(req);
     else if (req.method === 'POST' && path === '/api/llm/animate') res = await animate(req);
+    else if (req.method === 'POST' && path === '/api/tts') res = await tts.handle(req);
     else if (req.method === 'PUT' && m?.[1]) res = await putBook(req, decodeURIComponent(m[1]));
     else if (req.method === 'POST' && m?.[2]) res = await login(decodeURIComponent(m[2]));
     else res = fail(404, 'not-found');

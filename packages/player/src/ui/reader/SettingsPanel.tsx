@@ -132,7 +132,7 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
                 <button type="button" role="radio" aria-checked={current?.voiceURI === v.voiceURI} class="voice" onClick={() => session.setVoice(v)}>
                   <span class="voice-name">{v.name}</span>
                   <span class="voice-meta">
-                    {v.lang} · {v.localService ? t('settings.voiceLocal') : t('settings.voiceOnline')}
+                    {v.lang} · {v.provider ? t('settings.voiceServer') : v.localService ? t('settings.voiceLocal') : t('settings.voiceOnline')}
                     {matching.has(v.voiceURI) ? ` · ${t('settings.voiceMatching')}` : ''}
                   </span>
                 </button>

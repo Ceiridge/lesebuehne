@@ -1,5 +1,19 @@
 # Changelog
 
+## M4 – Server voices (2026-10-17)
+
+Try it: start a qwentts.cpp `tts-server`, then
+`TTS_BASE_URL=http://127.0.0.1:8080/v1 TTS_VOICES=vivian bun run dev` and open the Kant sample.
+
+- TTS provider for OpenAI-compatible speech endpoints with presets for a local qwentts.cpp server
+  (language by name, fixed seed, one request at a time) and OpenAI; always WAV.
+- Aligner in core: speech start/end and pauses from the audio energy, matched to punctuation,
+  syllable-weighted words in between; deterministic, shared by server and browser.
+- Server: `POST /api/tts` with disk cache and word timings, voices in capabilities and `doctor`.
+- Player: server voices next to browser voices (preferred by default), an audio speech port with
+  pitch-preserving tempo and exact word boundaries, prefetch of about a minute ahead with
+  cancellation on jumps, a readiness chip, and fallback to a browser voice when a server voice fails.
+
 ## M3 – Diagrams and animations (2026-10-17)
 
 Try it: `bun run dev`, open the Kybalion sample, jump to "The Principle of Rhythm" (Shift+→) and wait

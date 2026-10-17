@@ -1,6 +1,10 @@
 import { createContext } from 'preact';
 import { useContext } from 'preact/hooks';
+import { AudioSpeechPort, RoutingSpeechPort, type AudioLike } from '../engine/audio-port.ts';
 import { createWebSpeechPort, toVoiceInfo, type SpeechPort } from '../engine/speech-port.ts';
+import { matchingVoices } from '../engine/voices.ts';
+import { ttsBuffer } from '../ai/state.ts';
+import { ttsStatus } from '../ai/tts.ts';
 import { loadVoices, realTimers, type Timers, type VoiceInfo, type VoiceSource } from '../engine/voices.ts';
 import { Highlighter } from '../highlight/highlighter.ts';
 import { IndexedDbRepository } from '../storage/indexeddb.ts';
@@ -36,6 +40,35 @@ function media(query: string): boolean {
 
 let libraryPromise: Promise<LibraryService> | undefined;
 
+/**
+ * Speech: Web Speech voices and server TTS voices behind one routing port (spec 004). A failed TTS
+ * utterance is read by the best browser voice for its language.
+ */
+function speechFor(
+  synth: SpeechSynthesis | undefined,
+  Utterance: typeof SpeechSynthesisUtterance | undefined,
+  source: VoiceSource | undefined,
+): AppEnv['speech'] {
+  const web = synth && Utterance ? createWebSpeechPort(synth, Utterance) : undefined;
+  if (!web && typeof Audio === 'undefined') return undefined;
+  let webVoices: VoiceInfo[] = [];
+  const audio = new AudioSpeechPort({
+    source: () => ttsBuffer.value,
+    createAudio: () => new Audio() as unknown as AudioLike,
+    onState: (state, error) => (ttsStatus.value = { ...ttsStatus.value, state, ...(error ? { lastError: error } : {}) }),
+  });
+  const port = new RoutingSpeechPort(
+    web,
+    audio,
+    (lang) => matchingVoices(webVoices, lang)[0]?.voiceURI ?? webVoices[0]?.voiceURI,
+    (error) => (ttsStatus.value = { ...ttsStatus.value, limited: true, lastError: error }),
+  );
+  return {
+    port,
+    voices: async () => (webVoices = web ? await loadVoices(source) : []),
+  };
+}
+
 /** The real browser environment. */
 export function browserEnv(): AppEnv {
   const synth = (globalThis as { speechSynthesis?: SpeechSynthesis }).speechSynthesis;
@@ -55,7 +88,7 @@ export function browserEnv(): AppEnv {
       );
       return libraryPromise;
     },
-    speech: synth && Utterance ? { port: createWebSpeechPort(synth, Utterance), voices: () => loadVoices(source) } : undefined,
+    speech: speechFor(synth, Utterance, source),
     settings: new SettingsStore(kv, media('(prefers-reduced-motion: reduce)')),
     kv,
     fetch: (url) => fetch(url),

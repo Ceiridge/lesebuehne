@@ -85,8 +85,18 @@ export interface WordTiming {
   t1: number;
 }
 
+export interface TTSVoice {
+  /** Provider-local voice id (e.g. "vivian"). */
+  id: string;
+  /** Display name. */
+  name: string;
+  /** Primary languages (`de`, `en` …); empty = multilingual. */
+  languages: string[];
+}
+
 export interface TTSProvider extends ProviderMeta {
   kind: 'tts';
+  readonly voices: readonly TTSVoice[];
   synthesize(req: { text: string; lang: string; voice?: string; signal: AbortSignal }): Promise<{
     audio: Uint8Array;
     mime: string;

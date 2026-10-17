@@ -179,3 +179,42 @@ describe('M3: animate endpoint', () => {
     expect(bad.status).toBe(503);
   });
 });
+
+describe('M4: /api/tts', () => {
+  test('synthesizes via the voice provider, aligns, caches; unknown voice → 404', async () => {
+    const { encodeWav } = await import('@lesebuehne/core');
+    let calls = 0;
+    const samples = new Float32Array(24000);
+    for (let i = 2400; i < 21600; i++) samples[i] = 0.4 * Math.sin(i / 20);
+    const fakeTts = {
+      kind: 'tts' as const,
+      id: 'qwentts',
+      label: 'fake',
+      runsIn: ['server'] as const,
+      capabilities: {},
+      voices: [{ id: 'vivian', name: 'Vivian', languages: [] }],
+      isAvailable: async () => ({ ok: true }),
+      synthesize: async () => {
+        calls++;
+        return { audio: encodeWav({ samples, sampleRate: 24000 }), mime: 'audio/wav' };
+      },
+    };
+    const { api, ctx } = setup([]);
+    ctx.providers.registry.register(fakeTts);
+    const body = { text: 'Habe Mut, dich zu bedienen.', lang: 'de', voice: 'qwentts:vivian' };
+    const r1 = await call(api, 'POST', '/api/tts', body);
+    expect(r1.status).toBe(200);
+    expect(r1.headers.get('content-type')).toBe('audio/wav');
+    const words = JSON.parse(decodeURIComponent(r1.headers.get('x-lb-words')!)) as Array<{ t0: number; t1: number }>;
+    expect(words).toHaveLength(5);
+    expect(words[0]!.t0).toBeCloseTo(0.1, 1);
+    expect(r1.headers.get('x-lb-cached')).toBe('false');
+    expect((await r1.arrayBuffer()).byteLength).toBeGreaterThan(40000);
+    const r2 = await call(api, 'POST', '/api/tts', body);
+    expect(r2.headers.get('x-lb-cached')).toBe('true');
+    expect(calls).toBe(1);
+    expect((await call(api, 'POST', '/api/tts', { ...body, voice: 'nope:x' })).status).toBe(404);
+    const caps = (await (await call(api, 'GET', '/api/capabilities')).json()) as { providers: Array<{ id: string; voices?: unknown[] }> };
+    expect(caps.providers.find((p) => p.id === 'qwentts')?.voices).toHaveLength(1);
+  });
+});

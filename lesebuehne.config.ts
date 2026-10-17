@@ -15,5 +15,7 @@ export default defineConfig({
     openrouter: { enabled: true, maxCallsPerDay: 500 },
     // Example for a local endpoint (Ollama, LM Studio …):
     // 'openai-compatible': [{ id: 'ollama', baseURL: 'http://127.0.0.1:11434/v1', model: 'qwen3:8b' }],
+    // Example for a local Qwen3-TTS server (qwentts.cpp `tts-server --port 8080`):
+    // tts: [{ id: 'qwentts', kind: 'qwentts', baseURL: 'http://127.0.0.1:8080/v1', voices: ['vivian'] }],
   },
 });

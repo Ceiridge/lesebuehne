@@ -15,10 +15,12 @@ import {
 } from '@lesebuehne/core';
 import { planSection, type ForcedMode } from '@lesebuehne/director';
 import { resolveCueTimes, StageScheduler } from '@lesebuehne/renderers';
-import { batch, computed, signal } from '@preact/signals';
+import { batch, computed, effect, signal } from '@preact/signals';
 import { AiPlanner, type PlanInfo } from '../ai/planner.ts';
 import type { AiBackend } from '../ai/backends.ts';
-import { aiBackend } from '../ai/state.ts';
+import { aiBackend, aiDetails, refreshDetails, ttsBuffer, ttsVoices } from '../ai/state.ts';
+import { isTtsVoice, TTS_VOICE_PREFIX } from '../engine/audio-port.ts';
+import { footnoteLookup, sentenceItems } from '../engine/queue.ts';
 import { PlayerEngine, type Position } from '../engine/engine.ts';
 import { selectVoice, type VoiceChoice, type VoiceInfo } from '../engine/voices.ts';
 import { autoFollow, type FollowEvent, type FollowState } from '../nav/follow.ts';
@@ -123,6 +125,37 @@ export class ReaderSession {
     this.bookmarks.value = o.bookmarks;
     this.replanAll();
     this.attachAi(aiBackend.value);
+    this.stopPrefetch = effect(() => this.prefetchTts(this.engine.position.value.entryIndex));
+  }
+
+  private readonly stopPrefetch: () => void;
+  private lastPrefetch = -1;
+  private footnotesCache: ReturnType<typeof footnoteLookup> | undefined;
+  private get footnotes(): ReturnType<typeof footnoteLookup> {
+    return (this.footnotesCache ??= footnoteLookup(this.book));
+  }
+
+  /**
+   * Server TTS prefetch (spec 004 B4): the utterances of the next ~60 s of listening, in the
+   * engine's chunking, so playback finds them ready; a jump replaces the window.
+   */
+  private prefetchTts(entryIndex: number): void {
+    const voiceURI = this.engine?.currentVoice?.voiceURI;
+    const buffer = ttsBuffer.value;
+    if (!buffer || !isTtsVoice(voiceURI) || entryIndex === this.lastPrefetch) return;
+    this.lastPrefetch = entryIndex;
+    const voice = voiceURI!.slice(TTS_VOICE_PREFIX.length);
+    const lang = this.book.language;
+    const items: Array<{ text: string; lang: string; voice: string }> = [];
+    let seconds = 0;
+    const tempo = this.engine.currentTempo;
+    for (let i = entryIndex; i < this.timeline.entries.length && seconds < 60 && items.length < 40; i++) {
+      const entry = this.timeline.entries[i]!;
+      const from = i === entryIndex ? this.engine.position.value.tokenIndex : 0;
+      for (const item of sentenceItems(i, entry, from, settings.value.footnoteMode, this.footnotes, lang)) items.push({ text: item.text, lang, voice });
+      seconds += (entry.end - entry.start) / tempo;
+    }
+    buffer.prefetch(items);
   }
 
   /** (Re)connects the LLM director, e.g. after the provider settings changed. */
@@ -147,13 +180,16 @@ export class ReaderSession {
   }
 
   static async open(env: AppEnv, library: LibraryService, bundle: BookBundle, o: OpenOptions): Promise<ReaderSession> {
-    const [voices, overrides, bookmarks] = await Promise.all([
+    // Server TTS voices (spec 004): wait briefly for the provider list, never block opening.
+    if (aiBackend.value && !aiDetails.value) await Promise.race([refreshDetails(), new Promise((r) => setTimeout(r, 1500))]);
+    const [webVoices, overrides, bookmarks] = await Promise.all([
       env.speech ? env.speech.voices().catch(() => []) : Promise.resolve([]),
       library.overrides(bundle.book.id),
       library.bookmarks(bundle.book.id),
     ]);
     const timeline = buildTimeline(bundle.book);
     const start = await library.loadPosition(bundle.book.id, timeline);
+    const voices = env.speech ? [...ttsVoices(bundle.book.language), ...webVoices] : webVoices;
     return new ReaderSession(bundle, env, library, { ...o, voices, start, overrides, bookmarks });
   }
 
@@ -360,6 +396,8 @@ export class ReaderSession {
     settings.value = { ...settings.value, voiceByLang: { ...settings.value.voiceByLang, [lang]: v.voiceURI } };
     this.voiceChoice.value = selectVoice(this.voices, this.book.language, v.voiceURI);
     this.engine.setVoice(v);
+    this.lastPrefetch = -1;
+    this.prefetchTts(this.engine.position.value.entryIndex);
   }
 
   savePosition(): Promise<void> {
@@ -382,6 +420,7 @@ export class ReaderSession {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.stopPrefetch();
     this.ai?.dispose();
     void this.savePosition();
     this.engine.dispose();

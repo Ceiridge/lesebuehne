@@ -4,6 +4,7 @@ import { ChatGptPlanLLM } from '@lesebuehne/llm-chatgpt-plan';
 import { codexCliSource, CodexAuthLLM, openCodeSource, ownSource, type TokenSource } from '@lesebuehne/llm-codex-auth';
 import { OpenAICompatibleLLM } from '@lesebuehne/llm-openai-compatible';
 import { OpenRouterLLM } from '@lesebuehne/llm-openrouter';
+import { OpenAICompatibleTTS, openaiTTS, qwentts } from '@lesebuehne/tts-openai-compatible';
 import { join } from 'node:path';
 import type { ServerConfig, TaskModels } from './config.ts';
 
@@ -79,6 +80,28 @@ export function buildProviders(config: ServerConfig, dataDir: string, fetchImpl?
   for (const o of p['openai-compatible']) {
     registry.register(new OpenAICompatibleLLM({ id: o.id, baseURL: o.baseURL, model: o.model, ...(o.apiKey ? { apiKey: o.apiKey } : {}), ...f }));
     tasks.set(o.id, o.models);
+  }
+  for (const t of p.tts ?? []) {
+    const voices = t.voices.map((v) => (typeof v === 'string' ? { id: v, name: v, languages: [] } : v));
+    if (t.kind === 'qwentts') {
+      registry.register(qwentts({ id: t.id, ...(t.baseURL ? { baseURL: t.baseURL } : {}), voices, ...(typeof t.body?.seed === 'number' ? { seed: t.body.seed } : {}), ...f }));
+    } else if (t.kind === 'openai') {
+      registry.register(openaiTTS({ id: t.id, ...(t.apiKey ? { apiKey: t.apiKey } : {}), ...(t.model ? { model: t.model } : {}), voices: voices.map((v) => v.id), ...f }));
+    } else {
+      registry.register(
+        new OpenAICompatibleTTS({
+          id: t.id,
+          baseURL: t.baseURL ?? '',
+          voices,
+          ...(t.apiKey ? { apiKey: t.apiKey } : {}),
+          ...(t.model ? { model: t.model } : {}),
+          ...(t.language ? { language: t.language } : {}),
+          ...(t.format ? { format: t.format } : {}),
+          ...(t.body ? { body: t.body } : {}),
+          ...f,
+        }),
+      );
+    }
   }
 
   // Configured chain first, then any other registered LLM (e.g. extra openai-compatible instances).

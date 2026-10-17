@@ -6,6 +6,22 @@ import { t, type MessageKey } from '../../i18n/i18n.ts';
 import { formatDuration, nextSentence, prevSentence } from '../../nav/navigation.ts';
 import { IconMinus, IconNext, IconPause, IconPlay, IconPlus, IconPrev } from '../icons.tsx';
 import { Timeline } from './Timeline.tsx';
+import { ttsStatus } from '../../ai/tts.ts';
+import { isTtsVoice } from '../../engine/audio-port.ts';
+
+/** Server voice readiness (spec 004): buffering / ready ahead / limited. */
+function TtsChip({ session }: { session: ReaderSession }) {
+  if (!isTtsVoice(session.engine.currentVoice?.voiceURI)) return null;
+  const s = ttsStatus.value;
+  const state = s.limited ? 'limited' : s.state === 'buffering' ? 'buffering' : 'ready';
+  const label = t(`tts.${state}` as MessageKey, { ahead: s.ahead });
+  return (
+    <span class={`tts-chip is-${state}`} title={s.lastError ? `${label} – ${s.lastError}` : label} aria-live="polite">
+      <span class="ai-dot" aria-hidden="true" />
+      {label}
+    </span>
+  );
+}
 
 export function setTempo(session: ReaderSession, tempo: number): void {
   const next = clampTempo(tempo);
@@ -33,6 +49,7 @@ export function Controls({ session }: { session: ReaderSession }) {
           <span class="time-remaining" aria-live="off">
             {t('reader.remaining', { time: formatDuration(remaining.value) })}
           </span>
+          <TtsChip session={session} />
         </div>
         <div class="transport-main">
           <button type="button" class="icon-btn" aria-label={t('reader.prevSentence')} title={`${t('reader.prevSentence')} (←)`} onClick={() => session.navigate(prevSentence(session.timeline, p))}>

@@ -2069,3 +2069,25 @@ kbd {
 .lb-animation.is-loading .lb-animation-frame {
   opacity: 0;
 }
+
+/* ---------- Server TTS readiness (M4) ---------- */
+
+.tts-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 12px;
+  color: var(--c-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tts-chip.is-ready .ai-dot {
+  background: var(--c-accent);
+}
+.tts-chip.is-buffering .ai-dot {
+  background: var(--c-accent);
+  animation: ai-pulse 1.2s ease-in-out infinite;
+}
+.tts-chip.is-limited .ai-dot {
+  background: #c98a1b;
+}

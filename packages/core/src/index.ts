@@ -46,6 +46,8 @@ export * from './bundle/manifest.ts';
 export * from './visual/plan.ts';
 export * from './visual/style.ts';
 export * from './visual/animation.ts';
+export * from './audio/wav.ts';
+export * from './audio/align.ts';
 export * from './providers/types.ts';
 export * from './providers/errors.ts';
 export * from './providers/structured.ts';

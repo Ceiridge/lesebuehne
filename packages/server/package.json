@@ -14,6 +14,7 @@
     "@lesebuehne/llm-codex-auth": "workspace:*",
     "@lesebuehne/llm-openai-compatible": "workspace:*",
     "@lesebuehne/llm-openrouter": "workspace:*",
+    "@lesebuehne/tts-openai-compatible": "workspace:*",
     "zod": "4.6.5"
   }
 }

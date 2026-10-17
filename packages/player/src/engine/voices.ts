@@ -7,6 +7,8 @@ export interface VoiceInfo {
   lang: string;
   localService: boolean;
   default: boolean;
+  /** Server TTS provider (`tts:<provider>:<voice>` voices). */
+  provider?: string;
 }
 
 export type VoiceChoice =
@@ -18,7 +20,7 @@ export function matchingVoices(voices: readonly VoiceInfo[], lang: string): Voic
   const primary = primaryLanguage(lang);
   return voices
     .filter((v) => primaryLanguage(v.lang) === primary)
-    .sort((a, b) => Number(b.localService) - Number(a.localService) || Number(b.default) - Number(a.default));
+    .sort((a, b) => Number(!!b.provider) - Number(!!a.provider) || Number(b.localService) - Number(a.localService) || Number(b.default) - Number(a.default));
 }
 
 /**

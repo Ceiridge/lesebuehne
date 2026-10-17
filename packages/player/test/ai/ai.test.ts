@@ -319,3 +319,34 @@ describe('T6: backends', () => {
     expect(maskKey('')).toBe('');
   });
 });
+
+describe('M4: server voices in the session', () => {
+  test('server voices come first and are preferred; the prefetch window follows the position', async () => {
+    const { aiDetails, ttsBuffer } = await import('../../src/ai/state.ts');
+    const backend = new FakeBackend();
+    setBackend(backend);
+    const prefetched: Array<Array<{ text: string; voice: string }>> = [];
+    try {
+      aiDetails.value = {
+        chain: [],
+        budget: { images: 2, animations: 3 },
+        providers: [
+          { id: 'qwentts', label: 'q', available: true, reason: null, login: false, source: null, kind: 'tts', voices: [{ id: 'vivian', name: 'Vivian', languages: [] }] },
+          { id: 'en-only', label: 'e', available: true, reason: null, login: false, source: null, kind: 'tts', voices: [{ id: 'x', name: 'X', languages: ['en'] }] },
+        ],
+      };
+      ttsBuffer.value = { prefetch: (items: Array<{ text: string; voice: string }>) => void prefetched.push(items), clip: async () => ({ url: '', words: [] }) } as never;
+      const t = await makeEnv({ voices: [{ voiceURI: 'web-de', name: 'Katja', lang: 'de-DE', localService: true, default: true }] });
+      const session = await openSession(t, bundle);
+      expect(session.voices.map((v) => v.voiceURI)).toEqual(['tts:qwentts:vivian', 'web-de']);
+      expect(session.engine.currentVoice?.voiceURI).toBe('tts:qwentts:vivian');
+      expect(prefetched.at(-1)?.[0]?.voice).toBe('qwentts:vivian');
+      expect(prefetched.at(-1)?.[0]?.text).toContain('Kapitel eins'); // speech text, as the engine speaks it
+      session.navigate({ entryIndex: 3, tokenIndex: 0 });
+      expect(prefetched.at(-1)?.[0]?.text).toBe(session.timeline.entries[3]!.sentence.speechText);
+      session.dispose();
+    } finally {
+      setBackend(undefined);
+    }
+  });
+});

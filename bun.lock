@@ -105,6 +105,13 @@
         "@lesebuehne/llm-openai-compatible": "workspace:*",
       },
     },
+    "packages/providers/tts-openai-compatible": {
+      "name": "@lesebuehne/tts-openai-compatible",
+      "version": "0.0.0",
+      "dependencies": {
+        "@lesebuehne/core": "workspace:*",
+      },
+    },
     "packages/renderers": {
       "name": "@lesebuehne/renderers",
       "version": "0.0.0",
@@ -128,6 +135,7 @@
         "@lesebuehne/llm-codex-auth": "workspace:*",
         "@lesebuehne/llm-openai-compatible": "workspace:*",
         "@lesebuehne/llm-openrouter": "workspace:*",
+        "@lesebuehne/tts-openai-compatible": "workspace:*",
         "zod": "4.6.5",
       },
     },
@@ -162,6 +170,8 @@
     "@lesebuehne/renderers": ["@lesebuehne/renderers@workspace:packages/renderers"],
 
     "@lesebuehne/server": ["@lesebuehne/server@workspace:packages/server"],
+
+    "@lesebuehne/tts-openai-compatible": ["@lesebuehne/tts-openai-compatible@workspace:packages/providers/tts-openai-compatible"],
 
     "@preact/signals": ["@preact/signals@2.11.3", "", { "dependencies": { "@preact/signals-core": "^1.14.4" }, "peerDependencies": { "preact": ">= 10.25.0 || >=11.0.0-0" } }, "sha512-mttwFM98G/JiriTgMwU+UWygL6sfVmYEiNcPSKkUnv4PxPpZhmP2ugGC4qi360+ZIHyQ8NY05bfJT3b4RUIGlw=="],
 

@@ -8,6 +8,21 @@ export interface TaskModels {
   animate?: string;
 }
 
+export interface TtsConfig {
+  id: string;
+  /** Preset: `qwentts` (local Qwen3-TTS server), `openai`, or a plain `openai-compatible` endpoint. */
+  kind: 'qwentts' | 'openai' | 'openai-compatible';
+  baseURL?: string;
+  apiKey?: string;
+  model?: string;
+  /** Voice ids, or `{ id, name, languages }`. */
+  voices: Array<string | { id: string; name: string; languages: string[] }>;
+  language?: 'none' | 'code' | 'name';
+  format?: 'wav' | 'pcm';
+  /** Extra body fields (`seed`, `temperature` …). */
+  body?: Record<string, unknown>;
+}
+
 export interface ServerConfig {
   server: {
     port: number;
@@ -39,6 +54,8 @@ export interface ServerConfig {
     'anthropic-compatible': { enabled: boolean; baseURL?: string; apiKey?: string; model?: string; models?: TaskModels };
     /** Any number of OpenAI-compatible endpoints (OpenAI, Ollama, LM Studio …). */
     'openai-compatible': Array<{ id: string; baseURL: string; model: string; apiKey?: string; models?: TaskModels }>;
+    /** Speech providers (spec 004): a local qwentts.cpp server, OpenAI, or any compatible endpoint. */
+    tts: TtsConfig[];
   };
 }
 
@@ -60,6 +77,7 @@ export const DEFAULT_CONFIG: ServerConfig = {
     openrouter: { enabled: true },
     'anthropic-compatible': { enabled: true },
     'openai-compatible': [],
+    tts: [],
   },
 };
 
@@ -91,6 +109,19 @@ export function envOverrides(env: Env): ConfigInput {
       ...(env.ANTHROPIC_MODEL ? { model: env.ANTHROPIC_MODEL } : {}),
       ...(env.ANTHROPIC_BASE_URL ? { baseURL: env.ANTHROPIC_BASE_URL } : {}),
     };
+  }
+  if (env.TTS_BASE_URL || env.TTS_VOICES) {
+    const kind = (env.TTS_KIND ?? 'qwentts') as TtsConfig['kind'];
+    providers.tts = [
+      {
+        id: kind === 'openai-compatible' ? 'tts' : kind,
+        kind,
+        ...(env.TTS_BASE_URL ? { baseURL: env.TTS_BASE_URL } : {}),
+        ...(env.TTS_API_KEY ? { apiKey: env.TTS_API_KEY } : {}),
+        ...(env.TTS_MODEL ? { model: env.TTS_MODEL } : {}),
+        voices: (env.TTS_VOICES ?? '').split(',').map((v) => v.trim()).filter(Boolean),
+      },
+    ];
   }
   if (env.OPENAI_COMPAT_BASE_URL && env.OPENAI_COMPAT_MODEL) {
     providers['openai-compatible'] = [

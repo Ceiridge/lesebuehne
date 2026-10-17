@@ -1,4 +1,4 @@
-import { MemoryCache, ProviderRegistry, type Book, type LLMProvider, type ProviderStats, type ResultCache, type VisualPlan } from '@lesebuehne/core';
+import { MemoryCache, ProviderRegistry, type Book, type LLMProvider, type ProviderStats, type ResultCache, type TTSVoice, type VisualPlan, type WordTiming } from '@lesebuehne/core';
 import {
   DEFAULT_BUDGET,
   DirectorService,
@@ -27,6 +27,9 @@ export interface ProviderStatus {
   login: boolean;
   /** codex-auth: which token source is in use. */
   source: string | null;
+  kind?: string;
+  /** TTS providers: their voices. */
+  voices?: TTSVoice[];
   usage?: ProviderStats | undefined;
 }
 
@@ -44,6 +47,8 @@ export interface AiBackend {
   /** Animation program for an `animation` plan (throws when none could be written). */
   animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse>;
   status(): Promise<BackendStatus>;
+  /** Server TTS (spec 004): WAV audio and aligned word timings for one utterance. */
+  tts?(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[] }>;
   /** Starts an own sign-in on the server; returns the URL to open. */
   login?(providerId: string): Promise<string>;
 }
@@ -131,6 +136,18 @@ export class ServerBackend implements AiBackend {
       budget: caps.budget ?? DEFAULT_BUDGET,
       providers: caps.providers.map((p) => ({ ...p, usage: usage.providers[p.id] })),
     };
+  }
+
+  async tts(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[] }> {
+    const res = await this.http(this.url('api/tts'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text, lang, voice }),
+      signal,
+    });
+    if (!res.ok) await readJson(res);
+    const words = JSON.parse(decodeURIComponent(res.headers.get('x-lb-words') ?? '%5B%5D')) as WordTiming[];
+    return { audio: await res.blob(), words };
   }
 
   async login(providerId: string): Promise<string> {
