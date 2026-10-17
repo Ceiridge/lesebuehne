@@ -55,8 +55,11 @@ describe('M2 plan v2 rendering', () => {
       image: { prompt: 'p', aspect: '16:9', focusRegions: [] },
     };
     const s = visualState(image, [1], 2, 'none', { glossary });
-    expect(s.mode).toBe('kinetic');
-    expect(s.mode === 'kinetic' && s.terms[0]).toMatchObject({ term: 'Mut', color: '#aa3300' });
+    expect(s.mode).toBe('placeholder'); // M5: placeholder with the key terms on top until the image exists
+    const overlay = s.mode === 'placeholder' ? s.overlay : s;
+    expect(overlay.mode === 'kinetic' && overlay.terms[0]).toMatchObject({ term: 'Mut', color: '#aa3300' });
+
+
     const anim: VisualPlan = {
       ...base,
       mode: 'animation',

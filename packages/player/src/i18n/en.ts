@@ -169,6 +169,8 @@ export const en: Record<keyof typeof de, string> = {
   'debug.variant': 'variant {n}/{total}',
   'debug.fallback': 'AI unavailable',
   'debug.dropped': 'Dropped',
+  'debug.image': 'Image',
+  'debug.imagePending': 'being painted … (placeholder)',
   'debug.animation': 'Animation',
   'debug.animationPending': 'being written …',
   'debug.regenerate': 'Regenerate',

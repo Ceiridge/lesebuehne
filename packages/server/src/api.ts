@@ -8,6 +8,7 @@ import * as z from 'zod';
 import type { ServerConfig } from './config.ts';
 import type { ProviderSetup } from './providers.ts';
 import { TtsService } from './tts.ts';
+import { ImageService } from './images.ts';
 
 export const SERVER_VERSION = '0.2.0';
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -78,6 +79,15 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
   }
 
   const tts = new TtsService(registry, join(ctx.dataDir, 'cache', 'tts'));
+  const images = new ImageService({
+    registry,
+    chain: ctx.providers.imageChain ?? [],
+    cache: ctx.cache,
+    dir: join(ctx.dataDir, 'cache', 'images'),
+    styleReference: ctx.config.images?.styleReference ?? true,
+    styleBible: (book) => director.styleBible(book),
+    log,
+  });
   const director = new DirectorService({
     complete: registryComplete(registry, chain, ctx.providers.taskModel),
     cache: ctx.cache,
@@ -179,7 +189,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
       server: 'lesebuehne',
       version: SERVER_VERSION,
       prompts: { plan: PLAN_PROMPT_VERSION, style: STYLE_PROMPT_VERSION },
-      chains: { llm: [...chain, 'heuristic'] },
+      chains: { llm: [...chain, 'heuristic'], image: ctx.providers.imageChain ?? [] },
       budget: ctx.config.director.budget,
       providers,
     });
@@ -279,6 +289,8 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     else if (req.method === 'POST' && path === '/api/llm/prepare') res = await prepare(req);
     else if (req.method === 'POST' && path === '/api/llm/animate') res = await animate(req);
     else if (req.method === 'POST' && path === '/api/tts') res = await tts.handle(req);
+    else if (req.method === 'POST' && path === '/api/images') res = await images.handle(req, getBook);
+    else if (req.method === 'GET' && path.startsWith('/api/images/')) res = await images.serve(decodeURIComponent(path.slice('/api/images/'.length)));
     else if (req.method === 'PUT' && m?.[1]) res = await putBook(req, decodeURIComponent(m[1]));
     else if (req.method === 'POST' && m?.[2]) res = await login(decodeURIComponent(m[2]));
     else res = fail(404, 'not-found');

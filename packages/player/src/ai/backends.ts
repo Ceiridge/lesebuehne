@@ -33,6 +33,14 @@ export interface ProviderStatus {
   usage?: ProviderStats | undefined;
 }
 
+export interface ImageResult {
+  /** Absolute URL of the picture. */
+  url: string;
+  providerId: string;
+  variants: number;
+  selected: number;
+}
+
 export interface BackendStatus {
   chain: string[];
   providers: ProviderStatus[];
@@ -47,6 +55,8 @@ export interface AiBackend {
   /** Animation program for an `animation` plan (throws when none could be written). */
   animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse>;
   status(): Promise<BackendStatus>;
+  /** Server images (spec 005): an illustration for an `image` plan (slow: minutes). */
+  image?(book: Book, sectionId: string, plan: VisualPlan, opts: { regenerate?: boolean; select?: number }, signal: AbortSignal): Promise<ImageResult>;
   /** Server TTS (spec 004): WAV audio and aligned word timings for one utterance. */
   tts?(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[] }>;
   /** Starts an own sign-in on the server; returns the URL to open. */
@@ -136,6 +146,11 @@ export class ServerBackend implements AiBackend {
       budget: caps.budget ?? DEFAULT_BUDGET,
       providers: caps.providers.map((p) => ({ ...p, usage: usage.providers[p.id] })),
     };
+  }
+
+  async image(book: Book, sectionId: string, plan: VisualPlan, opts: { regenerate?: boolean; select?: number }, signal: AbortSignal): Promise<ImageResult> {
+    const r = await this.withBook(book, () => this.post<ImageResult>('api/images', { bookId: book.id, sectionId, plan, ...opts }, signal));
+    return { ...r, url: this.url(r.url) };
   }
 
   async tts(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[] }> {

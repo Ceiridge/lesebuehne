@@ -71,7 +71,7 @@ class FakeBackend implements AiBackend {
   }
 }
 
-function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[string, VisualPlan]>; animated: Array<[string, AnimationProgram]>; current: string; t: number } {
+function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[string, VisualPlan]>; animated: Array<[string, AnimationProgram]>; images: string[]; current: string; t: number } {
   const h = {
     book,
     order,
@@ -84,6 +84,8 @@ function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[
     applyStyle: () => undefined,
     animated: [] as Array<[string, AnimationProgram]>,
     applyAnimation: (id: string, program: AnimationProgram): void => void h.animated.push([id, program]),
+    images: [] as string[],
+    applyImage: (id: string, image: { url: string }): void => void h.images.push(`${id}=${image.url}`),
     now: (): number => h.t,
     ...over,
   };
@@ -269,7 +271,7 @@ describe('T6: backends', () => {
         return createApi({
           config: DEFAULT_CONFIG,
           dataDir: dir,
-          providers: { registry, chain: ['fake'], taskModel: () => undefined, files: { codexToken: '', planStore: '' } },
+          providers: { registry, chain: ['fake'], imageChain: [], taskModel: () => undefined, files: { codexToken: '', planStore: '' } },
           cache: new MemoryCache(),
         });
       };
@@ -348,5 +350,30 @@ describe('M4: server voices in the session', () => {
     } finally {
       setBackend(undefined);
     }
+  });
+});
+
+describe('M5: images in the planner', () => {
+  test('an image plan triggers the image job; R asks for a new image variant', async () => {
+    const backend = new FakeBackend();
+    const imagePlan: VisualPlan = {
+      ...kinetic('Mut'),
+      mode: 'image',
+      image: { prompt: 'A scholar in Königsberg at night', aspect: '16:9', focusRegions: [] },
+    };
+    backend.plan = async () => ({ plan: imagePlan, fallback: false, cached: false, variants: 1, selected: 0 });
+    const calls: Array<{ regenerate?: boolean }> = [];
+    (backend as unknown as { image: AiBackend['image'] }).image = async (_b, sectionId, _p, opts) => {
+      calls.push(opts);
+      return { url: `http://127.0.0.1/api/images/${sectionId}-${calls.length}.png`, providerId: 'image-use', variants: calls.length, selected: calls.length - 1 };
+    };
+    let plan: VisualPlan | undefined;
+    const h = host({ planOf: () => plan, applyPlan: (_id: string, p: VisualPlan) => void (plan = p) });
+    const p = new AiPlanner(h, backend);
+    p.schedule(order[0]!.id);
+    await settle();
+    expect(h.images[0]).toBe(`${order[0]!.id}=http://127.0.0.1/api/images/${order[0]!.id}-1.png`);
+    await p.regenerate(order[0]!.id);
+    expect(calls.at(-1)).toEqual({ regenerate: true });
   });
 });

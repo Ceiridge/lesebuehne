@@ -44,6 +44,8 @@ export function stageStep(session: ReaderSession, now: number): StageSnapshot {
     const sectionId = session.sectionOfKey(key);
     const anim = v.plan.mode === 'animation' ? session.animations.value.get(sectionId) : undefined;
     if (anim && anim.status !== 'failed') options.animation = { key: anim.key, code: anim.program.code, sectionStart: session.sectionStart(sectionId), palette };
+    const image = v.plan.mode === 'image' ? session.images.value.get(sectionId) : undefined;
+    if (image) options.image = { url: image.url };
     return visualState(v.plan, v.times, tau, motion, options);
   };
   return { frame, current: state(frame.current), previous: state(frame.previous), tau };
@@ -96,7 +98,7 @@ export function StagePanel({ session, subtitles = false }: { session: ReaderSess
           onAnimationStatus={(key, status) => session.animationStatus(key, status.state === 'failed' ? { state: 'failed', reason: status.reason } : status)}
         />
       </div>
-      {s.current && (s.current.mode === 'list' || s.current.mode === 'quote' || (s.current.mode === 'kinetic' && s.current.terms.length > 0)) && title ? (
+      {s.current && (s.current.mode === 'list' || s.current.mode === 'quote' || s.current.mode === 'image' || s.current.mode === 'placeholder' || (s.current.mode === 'kinetic' && s.current.terms.length > 0)) && title ? (
         <span class="stage-context">{title}</span>
       ) : null}
       {subtitles ? <Subtitles session={session} /> : null}

@@ -106,7 +106,8 @@ export interface TTSProvider extends ProviderMeta {
 
 export interface ImageProvider extends ProviderMeta {
   kind: 'image';
-  generate(req: { prompt: string; size: string; styleRef?: string; signal: AbortSignal }): Promise<{ image: Uint8Array; mime: string }>;
+  /** `size` like `1536x1024`; `styleRef` = an image whose style to follow (PNG/JPEG bytes). */
+  generate(req: { prompt: string; size: string; styleRef?: Uint8Array; signal: AbortSignal }): Promise<{ image: Uint8Array; mime: string; model?: string }>;
 }
 
 export interface Aligner extends ProviderMeta {

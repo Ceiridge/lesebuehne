@@ -23,6 +23,23 @@ export interface TtsConfig {
   body?: Record<string, unknown>;
 }
 
+export interface ImageConfig {
+  id: string;
+  /** `codex`: the Codex backend's image tool with the codex-auth sign-in (fallback for image-use). */
+  kind: 'image-use' | 'codex' | 'openai-compatible';
+  /** codex: image model and quality for the tool (omit for the backend default). */
+  imageModel?: string;
+  quality?: string;
+  /** image-use install directory (default `$IMAGE_USE_DIR` or `~/.local/share/image-use`). */
+  dir?: string;
+  /** image-use interpreter (default `py -3.11 -X utf8` on Windows, `python3 -X utf8` elsewhere). */
+  python?: string[];
+  baseURL?: string;
+  apiKey?: string;
+  model?: string;
+  body?: Record<string, unknown>;
+}
+
 export interface ServerConfig {
   server: {
     port: number;
@@ -37,6 +54,10 @@ export interface ServerConfig {
   };
   director: {
     budget: { images: number; animations: number };
+  };
+  images: {
+    /** The book's first image is the style reference of the following ones. */
+    styleReference: boolean;
   };
   providers: {
     'codex-auth': {
@@ -56,6 +77,8 @@ export interface ServerConfig {
     'openai-compatible': Array<{ id: string; baseURL: string; model: string; apiKey?: string; models?: TaskModels }>;
     /** Speech providers (spec 004): a local qwentts.cpp server, OpenAI, or any compatible endpoint. */
     tts: TtsConfig[];
+    /** Image providers (spec 005): `image-use` (ChatGPT subscription CLI) or compatible endpoints. */
+    images: ImageConfig[];
   };
 }
 
@@ -71,6 +94,7 @@ export const DEFAULT_CONFIG: ServerConfig = {
   server: { port: 8787, origins: [] },
   llm: { chain: ['codex-auth', 'chatgpt-plan', 'openrouter', 'anthropic-compatible'] },
   director: { budget: { images: 2, animations: 3 } },
+  images: { styleReference: true },
   providers: {
     'codex-auth': { enabled: true, model: 'auto', sources: ['opencode', 'codex-cli', 'own'] },
     'chatgpt-plan': { enabled: true, model: 'auto' },
@@ -78,6 +102,10 @@ export const DEFAULT_CONFIG: ServerConfig = {
     'anthropic-compatible': { enabled: true },
     'openai-compatible': [],
     tts: [],
+    images: [
+      { id: 'image-use', kind: 'image-use' },
+      { id: 'codex-image', kind: 'codex' },
+    ],
   },
 };
 

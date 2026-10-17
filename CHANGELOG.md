@@ -1,5 +1,21 @@
 # Changelog
 
+## M5 – Illustrations (2026-10-17)
+
+Try it: `bun run dev` with a ChatGPT sign-in available (image-use or codex-auth); sections the
+director sees as scenes get a picture after a minute or two, with Ken Burns moves to its regions.
+
+- Image providers: `image-use` (the CLI, started without any shell, prompt after `--`, user's
+  launcher settings honoured), `codex-image` (the Codex backend's image tool with the codex-auth
+  token sources) and OpenAI-compatible images endpoints; chain `image-use → codex-image`.
+- Server: `POST /api/images` with disk cache, variants, the first picture of a book as style
+  reference for the next ones, and `GET /api/images/<file>`.
+- Stage: Ken Burns camera as a pure function of reading time (drift, eased moves to focus regions,
+  still with reduced motion), image fade-in, and a placeholder in the book's colours with the key
+  terms while there is no picture (also in browser-only mode).
+- Player: image jobs follow the plans in the prefetch window; R paints a new variant; the debug
+  overlay shows image status and regions.
+
 ## M4 – Server voices (2026-10-17)
 
 Try it: start a qwentts.cpp `tts-server`, then

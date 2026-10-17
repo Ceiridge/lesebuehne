@@ -1,6 +1,7 @@
 import { conceptFor, type DiagramTemplate, type GlossaryConcept, type VisualPlan } from '@lesebuehne/core';
 import type { AnimationInit } from '../animation/host.ts';
 import { effectiveTemplate, sceneFor, type Scene } from '../diagram/layout.ts';
+import { cameraAt, type Camera } from './camera.ts';
 
 /** Motion level (B8 settings, `prefers-reduced-motion`). */
 export type Motion = 'full' | 'reduced' | 'none';
@@ -54,6 +55,10 @@ export type VisualState =
   | { mode: 'diagram'; template: DiagramTemplate; title?: string; scene: Scene; items: ItemState[]; edges: EdgeState[] }
   | { mode: 'kinetic'; terms: TermState[] }
   | { mode: 'quote'; text: string; opacity: number }
+  /** A generated illustration with its Ken Burns camera; `fallback` shows until it has loaded. */
+  | { mode: 'image'; url: string; camera: Camera; fallback: VisualState }
+  /** Stand-in for an image that is not there (yet): palette backdrop with the key terms on top. */
+  | { mode: 'placeholder'; overlay: VisualState }
   /** An LLM-written program in the sandbox; `fallback` is drawn until it runs (and if it fails). */
   | { mode: 'animation'; key: string; code: string; t: number; init: AnimationInit; fallback: VisualState }
   | { mode: 'none' };
@@ -61,6 +66,8 @@ export type VisualState =
 export interface VisualOptions {
   /** Glossary lookup (`glossaryIndex(styleBible)`) for colours and glyphs. */
   glossary?: ReadonlyMap<string, GlossaryConcept>;
+  /** The section's generated image (image plans only). */
+  image?: { url: string };
   /** The section's animation program (animation plans only). */
   animation?: { key: string; code: string; sectionStart: number; palette: AnimationInit['palette'] };
 }
@@ -91,7 +98,14 @@ export function cueProgress(cueTime: number, t: number, motion: Motion): number 
  */
 export function visualState(plan: VisualPlan, cueTimes: readonly number[], t: number, motion: Motion, options: VisualOptions = {}): VisualState {
   const travel = motion === 'full' ? 1 : 0;
-  const { glossary, animation } = options;
+  const { glossary, animation, image } = options;
+  if (plan.mode === 'image') {
+    const overlay = visualState({ ...plan, mode: 'kinetic' }, cueTimes, t, motion, glossary ? { glossary } : {});
+    const placeholder: VisualState = { mode: 'placeholder', overlay };
+    if (!image || !plan.image) return placeholder;
+    const focus = plan.cues.flatMap((c, k) => (c.action.type === 'focus' ? [{ time: cueTimes[k] ?? 0, regionId: c.action.regionId }] : []));
+    return { mode: 'image', url: image.url, camera: cameraAt(plan.image, focus, t, motion), fallback: placeholder };
+  }
   if (plan.mode === 'animation' && animation) {
     const fallback = visualState(plan, cueTimes, t, motion, glossary ? { glossary } : {});
     const items = (plan.diagram?.items ?? []).map((i) => ({ id: i.id, label: i.label, ...(i.group ? { group: i.group } : {}), ...tint(i.label, glossary) }));
@@ -153,8 +167,8 @@ export function visualState(plan: VisualPlan, cueTimes: readonly number[], t: nu
     return { mode: 'diagram', template: scene.template, ...title, scene, items, edges };
   }
   if (plan.mode === 'quote' && plan.quote) return { mode: 'quote', text: plan.quote.phrase, opacity: 1 };
-  // Kinetic, and the fallback of image/animation plans without a renderer: their key terms.
-  if (plan.mode === 'kinetic' || ((plan.mode === 'image' || plan.mode === 'animation') && plan.fallback === 'kinetic')) {
+  // Kinetic, and animation plans without a diagram: their key terms.
+  if (plan.mode === 'kinetic' || (plan.mode === 'animation' && plan.fallback === 'kinetic')) {
     const shown = plan.cues
       .map((cue, k) => ({ cue, time: cueTimes[k] ?? 0 }))
       .filter((x) => x.cue.action.type === 'showTerm' && x.time - (motion === 'none' ? 0 : REVEAL_SECONDS) <= t);

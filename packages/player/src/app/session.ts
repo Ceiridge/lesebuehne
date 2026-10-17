@@ -79,6 +79,8 @@ export class ReaderSession {
   readonly glossary = computed<ReadonlyMap<string, GlossaryConcept>>(() => glossaryIndex(this.styleBible.value));
   /** Where each section's plan came from (AI variants, fallbacks). */
   readonly planInfo = signal<ReadonlyMap<string, PlanInfo>>(new Map());
+  /** Generated illustrations by section (spec 005). */
+  readonly images = signal<ReadonlyMap<string, { url: string; providerId: string; variants: number; selected: number }>>(new Map());
   /** Animation programs by section (spec 003). */
   readonly animations = signal<ReadonlyMap<string, AnimationEntry>>(new Map());
   /** LLM director, when an AI backend is available (B8). */
@@ -172,6 +174,7 @@ export class ReaderSession {
             applyPlan: (id, plan, info) => this.setAiPlan(id, plan, info),
             applyStyle: (sb) => (this.styleBible.value = sb),
             applyAnimation: (id, program, info) => this.setAnimation(id, program, info),
+            applyImage: (id, image) => (this.images.value = new Map(this.images.value).set(id, image)),
             now: () => env.timers.now(),
           },
           backend,

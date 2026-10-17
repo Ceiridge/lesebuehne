@@ -125,6 +125,18 @@ export class CodexAuthLLM implements LLMProvider {
     };
   }
 
+  /** Request headers with a valid token (for other Codex-backend features, e.g. images). */
+  async authHeaders(signal?: AbortSignal): Promise<Record<string, string>> {
+    const t = await this.token(signal);
+    if ('reason' in t) throw new ProviderError(this.id, 'unavailable', t.reason);
+    return this.headers(t.token);
+  }
+
+  /** Absolute URL of a backend path (`/responses` …). */
+  endpoint(path: string): string {
+    return `${this.base()}${path}`;
+  }
+
   /** Models from the backend's list (visibility `list`), cached for 10 minutes. */
   async listModels(signal: AbortSignal): Promise<ModelInfo[]> {
     if (this.models && this.now() - this.models.at < 600_000) return this.models.list;
@@ -210,6 +222,8 @@ function outputText(output: unknown): string {
     .map((c) => c.text ?? '')
     .join('');
 }
+
+export { CodexImageProvider, type CodexImageConfig } from './image.ts';
 
 export default function create(config: CodexAuthConfig = {}): CodexAuthLLM {
   return new CodexAuthLLM(config);

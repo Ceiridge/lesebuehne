@@ -12,6 +12,7 @@ export function DebugOverlay({ session, plan, tau }: { session: ReaderSession; p
   const info = session.planInfo.value.get(sectionId);
   const meta = plan.meta;
   const anim = plan.mode === 'animation' ? session.animations.value.get(sectionId) : undefined;
+  const image = plan.mode === 'image' ? session.images.value.get(sectionId) : undefined;
   const source = meta ? `${meta.providerId}${meta.model ? ` · ${meta.model}` : ''} · ${meta.promptVersion}` : `${t('debug.heuristic')} · ${plan.version}`;
   return (
     <aside class="debug" aria-label={t('debug.title')}>
@@ -35,6 +36,17 @@ export function DebugOverlay({ session, plan, tau }: { session: ReaderSession; p
               {anim
                 ? `${anim.status}${anim.reason ? ` (${anim.reason})` : ''} · ${anim.program.code.length} chars${anim.variants > 1 ? ` · ${t('debug.variant', { n: anim.selected + 1, total: anim.variants })}` : ''}`
                 : t('debug.animationPending')}
+            </dd>
+          </>
+        ) : null}
+        {plan.mode === 'image' ? (
+          <>
+            <dt>{t('debug.image')}</dt>
+            <dd>
+              {image
+                ? `${image.providerId}${image.variants > 1 ? ` · ${t('debug.variant', { n: image.selected + 1, total: image.variants })}` : ''}`
+                : t('debug.imagePending')}
+              {plan.image ? ` · ${plan.image.aspect} · ${plan.image.focusRegions.map((r) => r.label).join(', ')}` : ''}
             </dd>
           </>
         ) : null}

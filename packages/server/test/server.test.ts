@@ -42,7 +42,7 @@ function setup(fakes: FakeLLM[], config: Partial<ServerConfig> = {}): { api: Ret
   const ctx: ApiContext = {
     config: { ...DEFAULT_CONFIG, ...config },
     dataDir: tmp,
-    providers: { registry, chain: fakes.map((f) => f.id), taskModel: () => undefined, files: { codexToken: join(tmp, 'c.json'), planStore: join(tmp, 'p.json') } },
+    providers: { registry, chain: fakes.map((f) => f.id), imageChain: ['fake-image'], taskModel: () => undefined, files: { codexToken: join(tmp, 'c.json'), planStore: join(tmp, 'p.json') } },
     cache: new MemoryCache(),
   };
   return { api: createApi(ctx), ctx };
@@ -216,5 +216,52 @@ describe('M4: /api/tts', () => {
     expect((await call(api, 'POST', '/api/tts', { ...body, voice: 'nope:x' })).status).toBe(404);
     const caps = (await (await call(api, 'GET', '/api/capabilities')).json()) as { providers: Array<{ id: string; voices?: unknown[] }> };
     expect(caps.providers.find((p) => p.id === 'qwentts')?.voices).toHaveLength(1);
+  });
+});
+
+describe('M5: images', () => {
+  test('generate, cache, variants, style reference from the first image, safe file serving', async () => {
+    const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, ...new Array(300).fill(7)]);
+    const requests: Array<{ prompt: string; size: string; styleRef?: Uint8Array }> = [];
+    const fakeImage = {
+      kind: 'image' as const,
+      id: 'fake-image',
+      label: 'fake',
+      runsIn: ['server'] as const,
+      capabilities: {},
+      isAvailable: async () => ({ ok: true }),
+      generate: async (req: { prompt: string; size: string; styleRef?: Uint8Array }) => {
+        requests.push(req);
+        return { image: PNG, mime: 'image/png' };
+      },
+    };
+    const { api, ctx } = setup([]);
+    ctx.providers.registry.register(fakeImage);
+    await call(api, 'PUT', `/api/books/${encodeURIComponent(book.id)}`, book);
+    const plan = {
+      version: 'llm-plan-4',
+      mode: 'image',
+      rationale: 'scene',
+      keyTerms: [],
+      fallback: 'kinetic',
+      cues: [],
+      image: { prompt: 'Königsberg street at dawn, a scholar with a book', aspect: '16:9', focusRegions: [{ id: 'scholar', label: 'Scholar', x: 0.1, y: 0.2, w: 0.3, h: 0.6 }] },
+    };
+    type R = { url: string; cached: boolean; variants: number; selected: number };
+    const r1 = (await (await call(api, 'POST', '/api/images', { bookId: book.id, sectionId, plan })).json()) as R;
+    expect(r1).toMatchObject({ cached: false, variants: 1 });
+    expect(requests[0]!.size).toBe('1536x1024');
+    expect(requests[0]!.prompt).toContain('No text');
+    expect(requests[0]!.styleRef).toBeUndefined();
+    const r2 = (await (await call(api, 'POST', '/api/images', { bookId: book.id, sectionId, plan })).json()) as R;
+    expect(r2.cached).toBe(true);
+    const r3 = (await (await call(api, 'POST', '/api/images', { bookId: book.id, sectionId, plan, regenerate: true })).json()) as R;
+    expect(r3).toMatchObject({ variants: 2, selected: 1 });
+    expect(requests[1]!.styleRef?.byteLength).toBe(PNG.byteLength); // the first image is the style reference
+    const file = await call(api, 'GET', `/${r3.url}`);
+    expect(file.headers.get('content-type')).toBe('image/png');
+    expect((await file.arrayBuffer()).byteLength).toBe(PNG.byteLength);
+    expect((await call(api, 'GET', '/api/images/..%2F..%2Fsecret.png')).status).toBe(400);
+    expect((await call(api, 'POST', '/api/images', { bookId: book.id, sectionId, plan: { ...plan, mode: 'kinetic', image: undefined } })).status).toBe(503);
   });
 });

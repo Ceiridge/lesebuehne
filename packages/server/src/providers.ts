@@ -1,10 +1,12 @@
 import { ProviderRegistry, type LLMProvider } from '@lesebuehne/core';
 import { AnthropicCompatibleLLM } from '@lesebuehne/llm-anthropic-compatible';
 import { ChatGptPlanLLM } from '@lesebuehne/llm-chatgpt-plan';
-import { codexCliSource, CodexAuthLLM, openCodeSource, ownSource, type TokenSource } from '@lesebuehne/llm-codex-auth';
+import { codexCliSource, CodexAuthLLM, CodexImageProvider, openCodeSource, ownSource, type TokenSource } from '@lesebuehne/llm-codex-auth';
 import { OpenAICompatibleLLM } from '@lesebuehne/llm-openai-compatible';
 import { OpenRouterLLM } from '@lesebuehne/llm-openrouter';
 import { OpenAICompatibleTTS, openaiTTS, qwentts } from '@lesebuehne/tts-openai-compatible';
+import { ImageUseProvider } from '@lesebuehne/image-use';
+import { OpenAICompatibleImages } from '@lesebuehne/image-openai-compatible';
 import { join } from 'node:path';
 import type { ServerConfig, TaskModels } from './config.ts';
 
@@ -12,6 +14,8 @@ export interface ProviderSetup {
   registry: ProviderRegistry;
   /** The LLM chain in order (registered providers only; the heuristic follows implicitly). */
   chain: string[];
+  /** Image providers in order. */
+  imageChain: string[];
   /** Model override per provider and task. */
   taskModel(providerId: string, task: keyof TaskModels): string | undefined;
   /** Files of the own sign-in flows. */
@@ -81,6 +85,27 @@ export function buildProviders(config: ServerConfig, dataDir: string, fetchImpl?
     registry.register(new OpenAICompatibleLLM({ id: o.id, baseURL: o.baseURL, model: o.model, ...(o.apiKey ? { apiKey: o.apiKey } : {}), ...f }));
     tasks.set(o.id, o.models);
   }
+  const imageChain: string[] = [];
+  for (const i of p.images ?? []) {
+    if (i.kind === 'image-use') registry.register(new ImageUseProvider({ id: i.id, ...(i.dir ? { dir: i.dir } : {}), ...(i.python ? { python: i.python } : {}) }));
+    else if (i.kind === 'codex') {
+      const auth = registry.get('codex-auth', 'llm');
+      if (!(auth instanceof CodexAuthLLM)) continue;
+      registry.register(new CodexImageProvider(auth, { id: i.id, ...(i.model ? { model: i.model } : {}), ...(i.imageModel ? { imageModel: i.imageModel } : {}), ...(i.quality ? { quality: i.quality } : {}), ...f }));
+    } else {
+      registry.register(
+        new OpenAICompatibleImages({
+          id: i.id,
+          baseURL: i.baseURL ?? '',
+          ...(i.apiKey ? { apiKey: i.apiKey, requiresKey: true } : {}),
+          ...(i.model ? { model: i.model } : {}),
+          ...(i.body ? { body: i.body } : {}),
+          ...f,
+        }),
+      );
+    }
+    imageChain.push(i.id);
+  }
   for (const t of p.tts ?? []) {
     const voices = t.voices.map((v) => (typeof v === 'string' ? { id: v, name: v, languages: [] } : v));
     if (t.kind === 'qwentts') {
@@ -107,5 +132,5 @@ export function buildProviders(config: ServerConfig, dataDir: string, fetchImpl?
   // Configured chain first, then any other registered LLM (e.g. extra openai-compatible instances).
   const registered = registry.list('llm').map((x) => x.id);
   const chain = [...config.llm.chain.filter((id) => registered.includes(id)), ...registered.filter((id) => !config.llm.chain.includes(id))];
-  return { registry, chain, taskModel: (id, task) => tasks.get(id)?.[task], files };
+  return { registry, chain, imageChain, taskModel: (id, task) => tasks.get(id)?.[task], files };
 }

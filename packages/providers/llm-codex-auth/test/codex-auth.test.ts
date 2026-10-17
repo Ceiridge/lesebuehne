@@ -145,3 +145,35 @@ describe('codex-auth: requests like OpenCode', () => {
     await expect(limited.completeJSON(req)).rejects.toMatchObject({ code: 'rate-limit' });
   });
 });
+
+describe('M5: codex-image', () => {
+  test('image_generation tool request; picture from output_item.done; style reference attached', async () => {
+    const { CodexImageProvider } = await import('../src/index.ts');
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4]);
+    const bodies: Array<Record<string, any>> = [];
+    const fetchFn = async (url: string, init?: RequestInit) => {
+      if (url.includes('/models')) return Response.json({ models: [{ slug: 'm-fast', visibility: 'list' }] });
+      bodies.push(JSON.parse(String(init?.body)));
+      const events = [
+        { type: 'response.image_generation_call.generating' },
+        { type: 'response.output_item.done', item: { type: 'image_generation_call', result: btoa(String.fromCharCode(...png)) } },
+        { type: 'response.completed', response: {} },
+      ];
+      return new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } });
+    };
+    const auth = new CodexAuthLLM({ sources: [fixed({ access: 'a', accountId: 'acc', expires: NOW + 10_000_000 })], fetch: fetchFn, now: () => NOW });
+    const img = new CodexImageProvider(auth, { fetch: fetchFn });
+    const r = await img.generate({ prompt: 'a castle', size: '1536x1024', styleRef: png, signal: new AbortController().signal });
+    expect([...r.image]).toEqual([...png]);
+    expect(bodies[0]!.model).toBe('m-fast');
+    expect(bodies[0]!.tools).toEqual([{ type: 'image_generation', output_format: 'png', size: '1536x1024' }]);
+    expect(bodies[0]!.tool_choice).toBe('required');
+    expect(bodies[0]!.input[0].content[0].type).toBe('input_image');
+    expect(bodies[0]!.store).toBe(false);
+    const failing = new CodexImageProvider(auth, {
+      model: 'x',
+      fetch: async () => new Response(`data: ${JSON.stringify({ type: 'response.failed', response: { error: { message: 'usage limit reached' } } })}\n\n`),
+    });
+    await expect(failing.generate({ prompt: 'p', size: '1024x1024', signal: new AbortController().signal })).rejects.toMatchObject({ code: 'rate-limit' });
+  });
+});

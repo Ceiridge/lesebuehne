@@ -2091,3 +2091,74 @@ kbd {
 .tts-chip.is-limited .ai-dot {
   background: #c98a1b;
 }
+
+/* ---------- Images and placeholder (M5) ---------- */
+
+.lb-visual.lb-image,
+.lb-visual.lb-placeholder {
+  position: relative;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 14px;
+}
+.lb-image-fallback {
+  position: absolute;
+  inset: 0;
+}
+.lb-image-picture {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: 0 0;
+  opacity: 0;
+  transition: opacity var(--dur-slow);
+  will-change: transform;
+}
+.lb-image.is-ready .lb-image-picture {
+  opacity: 1;
+}
+.lb-placeholder {
+  background:
+    radial-gradient(70% 90% at 15% 20%, color-mix(in srgb, var(--lb-accent) 22%, transparent), transparent),
+    radial-gradient(60% 80% at 85% 80%, color-mix(in srgb, var(--lb-accent2) 20%, transparent), transparent),
+    color-mix(in srgb, var(--c-stage-bg) 92%, var(--lb-accent) 8%);
+}
+.lb-placeholder-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(40px);
+  opacity: 0.35;
+}
+.lb-orb-a {
+  width: 38%;
+  aspect-ratio: 1;
+  left: 8%;
+  top: 12%;
+  background: var(--lb-accent);
+}
+.lb-orb-b {
+  width: 30%;
+  aspect-ratio: 1;
+  right: 10%;
+  bottom: 8%;
+  background: var(--lb-accent2);
+}
+:root[data-motion='full'] .lb-placeholder-orb {
+  animation: lb-orb 18s ease-in-out infinite alternate;
+}
+@keyframes lb-orb {
+  to {
+    transform: translate(6%, 4%) scale(1.08);
+  }
+}
+.lb-placeholder-content {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 6%;
+}

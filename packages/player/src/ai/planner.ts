@@ -30,6 +30,8 @@ export interface PlannerHost {
   /** An AI plan arrived (or a variant was chosen). */
   applyPlan(sectionId: string, plan: VisualPlan, info: PlanInfo): void;
   applyStyle(sb: StyleBible): void;
+  /** An illustration arrived for an image plan. */
+  applyImage(sectionId: string, image: { url: string; providerId: string; variants: number; selected: number }): void;
   /** An animation program arrived for an animation plan. */
   applyAnimation(sectionId: string, program: AnimationProgram, info: { variants: number; selected: number }): void;
   now(): number;
@@ -155,6 +157,27 @@ export class AiPlanner {
     this.info.set(sectionId, info);
     this.host.applyPlan(sectionId, r.plan, info);
     if (r.plan.mode === 'animation' && r.plan.animation) void this.animateJob(sectionId, r.plan, 0.5);
+    if (r.plan.mode === 'image' && r.plan.image) void this.imageJob(sectionId, r.plan, 0.6 + this.distance(sectionId));
+  }
+
+  /** Reading distance of a section from the current one (for job priorities). */
+  private distance(sectionId: string): number {
+    const order = this.host.order;
+    const cur = order.findIndex((s) => s.id === this.host.currentSectionId());
+    const k = order.findIndex((s) => s.id === sectionId);
+    return cur < 0 || k < 0 ? 0 : Math.abs(k - cur);
+  }
+
+  private imageJob(sectionId: string, plan: VisualPlan, priority: number, opts: { regenerate?: boolean } = {}): Promise<void> {
+    const image = this.backend.image?.bind(this.backend);
+    if (!image) return Promise.resolve();
+    const key = `img:${sectionId}${opts.regenerate ? ':r' : ''}`;
+    return this.track(this.queue.enqueue({ key, priority, run: (signal) => image(this.host.book, sectionId, plan, opts, signal) })).then(
+      (r) => this.host.applyImage(sectionId, r),
+      (e: unknown) => {
+        if (!(e instanceof DOMException && e.name === 'AbortError')) this.note(undefined, e);
+      },
+    );
   }
 
   private readonly repaired = new Set<string>();
@@ -209,7 +232,7 @@ export class AiPlanner {
     const keys = new Set([
       'style',
       'style-regen',
-      ...wanted.flatMap((w) => [`plan:${w.id}`, `anim:${w.id}`, `anim:${w.id}:r`]),
+      ...wanted.flatMap((w) => [`plan:${w.id}`, `anim:${w.id}`, `anim:${w.id}:r`, `img:${w.id}`, `img:${w.id}:r`]),
       ...[...this.info.keys()].flatMap((id) => [`regen:${id}`, `select:${id}`]),
     ]);
     this.queue.retain(keys);
@@ -227,6 +250,7 @@ export class AiPlanner {
     this.failedAt.delete(sectionId);
     const current = this.host.planOf(sectionId);
     if (current?.mode === 'animation' && this.info.get(sectionId)?.source === 'ai') return this.animateJob(sectionId, current, -2, { regenerate: true });
+    if (current?.mode === 'image' && this.info.get(sectionId)?.source === 'ai' && this.backend.image) return this.imageJob(sectionId, current, -2, { regenerate: true });
     return this.planJob(sectionId, -2, { regenerate: true });
   }
 
