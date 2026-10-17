@@ -22,7 +22,7 @@ export interface ApiContext {
 }
 
 export type ServerEvent =
-  | { type: 'job'; job: 'plan' | 'style'; key: string; state: 'start' | 'done' | 'error'; providerId?: string; fallback?: boolean; sectionId?: string }
+  | { type: 'job'; job: 'plan' | 'style' | 'animate'; key: string; state: 'start' | 'done' | 'error'; providerId?: string; fallback?: boolean; sectionId?: string }
   | { type: 'auth'; providerId: string; ok: boolean; reason?: string }
   | { type: 'status' };
 
@@ -37,6 +37,14 @@ const PlanBody = z.object({
   budget: z.object({ images: z.number().int().min(0), animations: z.number().int().min(0) }).optional(),
   regenerate: z.boolean().optional(),
   select: z.number().int().min(0).optional(),
+});
+const AnimateBody = z.object({
+  bookId: z.string().min(1),
+  sectionId: z.string().min(1),
+  plan: VisualPlanSchema,
+  regenerate: z.boolean().optional(),
+  select: z.number().int().min(0).optional(),
+  error: z.string().max(500).optional(),
 });
 const PrepareBody = z.object({ bookId: z.string().min(1), regenerate: z.boolean().optional(), select: z.number().int().min(0).optional() });
 
@@ -85,6 +93,29 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     try {
       const { regenerate, select } = body.data;
       return json(await director.prepare(book, { ...(regenerate ? { regenerate } : {}), ...(select !== undefined ? { select } : {}) }, req.signal));
+    } catch (e) {
+      if (req.signal.aborted) return fail(499, 'aborted');
+      return fail(503, 'unavailable', e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function animate(req: Request): Promise<Response> {
+    const body = AnimateBody.safeParse(await req.json().catch(() => undefined));
+    if (!body.success) return fail(400, 'bad-request', body.error.message);
+    const book = await getBook(body.data.bookId);
+    if (!book) return fail(404, 'unknown-book');
+    if (!book.chapters.some((c) => c.sections.some((x) => x.id === body.data.sectionId))) return fail(404, 'unknown-section');
+    const { regenerate, select, error } = body.data;
+    try {
+      return json(
+        await director.animate(
+          book,
+          body.data.sectionId,
+          body.data.plan,
+          { ...(regenerate ? { regenerate } : {}), ...(select !== undefined ? { select } : {}), ...(error ? { error } : {}) },
+          req.signal,
+        ),
+      );
     } catch (e) {
       if (req.signal.aborted) return fail(499, 'aborted');
       return fail(503, 'unavailable', e instanceof Error ? e.message : String(e));
@@ -237,6 +268,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     else if (req.method === 'GET' && path === '/api/events') res = events(req);
     else if (req.method === 'POST' && path === '/api/llm/plan') res = await plan(req);
     else if (req.method === 'POST' && path === '/api/llm/prepare') res = await prepare(req);
+    else if (req.method === 'POST' && path === '/api/llm/animate') res = await animate(req);
     else if (req.method === 'PUT' && m?.[1]) res = await putBook(req, decodeURIComponent(m[1]));
     else if (req.method === 'POST' && m?.[2]) res = await login(decodeURIComponent(m[2]));
     else res = fail(404, 'not-found');

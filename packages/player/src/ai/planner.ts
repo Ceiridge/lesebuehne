@@ -1,4 +1,4 @@
-import { JobQueue, type Book, type Section, type StyleBible, type VisualPlan } from '@lesebuehne/core';
+import { JobQueue, type AnimationProgram, type Book, type Section, type StyleBible, type VisualPlan } from '@lesebuehne/core';
 import { budgetAfter, DEFAULT_BUDGET, type PlanBudget, type PlanResponse } from '@lesebuehne/director';
 import type { AiBackend } from './backends.ts';
 import { aiStatus } from './state.ts';
@@ -30,6 +30,8 @@ export interface PlannerHost {
   /** An AI plan arrived (or a variant was chosen). */
   applyPlan(sectionId: string, plan: VisualPlan, info: PlanInfo): void;
   applyStyle(sb: StyleBible): void;
+  /** An animation program arrived for an animation plan. */
+  applyAnimation(sectionId: string, program: AnimationProgram, info: { variants: number; selected: number }): void;
   now(): number;
 }
 
@@ -152,6 +154,30 @@ export class AiPlanner {
     const info: PlanInfo = { source: 'ai', variants: r.variants, selected: r.selected, ...(r.plan.meta ? { providerId: r.plan.meta.providerId } : {}) };
     this.info.set(sectionId, info);
     this.host.applyPlan(sectionId, r.plan, info);
+    if (r.plan.mode === 'animation' && r.plan.animation) void this.animateJob(sectionId, r.plan, 0.5);
+  }
+
+  private readonly repaired = new Set<string>();
+
+  private animateJob(sectionId: string, plan: VisualPlan, priority: number, opts: { regenerate?: boolean; error?: string } = {}): Promise<void> {
+    const key = `anim:${sectionId}${opts.regenerate || opts.error ? ':r' : ''}`;
+    return this.track(this.queue.enqueue({ key, priority, run: (signal) => this.backend.animate(this.host.book, sectionId, plan, opts, signal) })).then(
+      (r) => this.host.applyAnimation(sectionId, r.program, { variants: r.variants, selected: r.selected }),
+      (e: unknown) => {
+        if (!(e instanceof DOMException && e.name === 'AbortError')) this.note(undefined, e);
+      },
+    );
+  }
+
+  /**
+   * The sandbox rejected or crashed the program: ask once per program for a corrected one (the
+   * diagram stays meanwhile).
+   */
+  animationFailed(sectionId: string, codeKey: string, reason: string): void {
+    const plan = this.host.planOf(sectionId);
+    if (!plan || plan.mode !== 'animation' || this.repaired.has(codeKey)) return;
+    this.repaired.add(codeKey);
+    void this.animateJob(sectionId, plan, -1, { error: reason });
   }
 
   private planJob(sectionId: string, priority: number, opts: { regenerate?: boolean; select?: number } = {}): Promise<void> {
@@ -180,7 +206,12 @@ export class AiPlanner {
   schedule(sectionId: string): void {
     const wanted = this.window(sectionId);
     const now = this.host.now();
-    const keys = new Set(['style', 'style-regen', ...wanted.map((w) => `plan:${w.id}`), ...[...this.info.keys()].flatMap((id) => [`regen:${id}`, `select:${id}`])]);
+    const keys = new Set([
+      'style',
+      'style-regen',
+      ...wanted.flatMap((w) => [`plan:${w.id}`, `anim:${w.id}`, `anim:${w.id}:r`]),
+      ...[...this.info.keys()].flatMap((id) => [`regen:${id}`, `select:${id}`]),
+    ]);
     this.queue.retain(keys);
     void this.ensureStyle();
     for (const w of wanted) {
@@ -191,9 +222,11 @@ export class AiPlanner {
     }
   }
 
-  /** R: a new variant for the section (old variants stay selectable). */
+  /** R: a new variant for the section (old variants stay selectable); animations get a new program. */
   regenerate(sectionId: string): Promise<void> {
     this.failedAt.delete(sectionId);
+    const current = this.host.planOf(sectionId);
+    if (current?.mode === 'animation' && this.info.get(sectionId)?.source === 'ai') return this.animateJob(sectionId, current, -2, { regenerate: true });
     return this.planJob(sectionId, -2, { regenerate: true });
   }
 

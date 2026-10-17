@@ -1,5 +1,5 @@
 /** Prompt versions are part of every cache key: change them when prompts change. */
-export const PLAN_PROMPT_VERSION = 'llm-plan-3';
+export const PLAN_PROMPT_VERSION = 'llm-plan-4';
 export const STYLE_PROMPT_VERSION = 'llm-style-1';
 
 const DATA_RULE =
@@ -27,7 +27,8 @@ export const PLAN_SYSTEM = [
   '- a concrete scene or anecdote (historical example, place, person) → mode "image" with a prompt that follows the Style Bible, an aspect ratio and named focus regions (normalised rectangles);',
   '- a central thesis or memorable maxim → mode "quote" with the exact sentence alias and the phrase copied verbatim (8–240 characters);',
   '- transition, reflection or repetition → mode "kinetic" (key terms only) or "none". No picture is better than an arbitrary picture.',
-  'Cues anchor visual changes to the moment a phrase is spoken: sentence = alias like "s3", phrase = words copied verbatim from that sentence (short, 1–6 words), action = reveal/highlight (target = item id), showTerm (target = a key term), focus (target = image region id). Cues are in reading order.',
+  'Cues anchor visual changes to the moment a phrase is spoken: sentence = alias like "s3", phrase = words copied verbatim from that sentence (short, 1–6 words), action = reveal/highlight/dim (target = item id), connect (target = "fromId>toId", draws that edge), showTerm (target = a key term), focus (target = image region id). Cues are in reading order.',
+  'Templates and how items/groups/edges are read: list; process and causal-chain (items in order, edges optional); timeline (items in order, group = date or era); cycle (items in order around a ring); spectrum (first and last item are the poles, the others lie between in order); comparison (group = column name); hierarchy (edges parent>child, or the first item is the root); matrix (exactly 4 items: top-left, top-right, bottom-left, bottom-right; group = caption); venn (items with group null are the 2–3 sets, other items have group = set id or "a+b" for an overlap); network (edges between items); equation (group "left" or "right"; pairs face each other, e.g. as above / so below).',
   'keyTerms must occur verbatim in the section. Respect the budget given in the context: if images or animations are used up, choose diagram, quote or kinetic instead.',
   'Diagram: the title names the whole (e.g. "The Seven Principles"); items are only its parts, never the whole again. Keep labels short and parallel. detail = a few explanatory words or null; never glyphs, colours or ids (the stage adds glossary glyphs and colours itself).',
   'Use the glossary labels and colours for continuity across the book. Fill every field; use null for parts that do not apply to the chosen mode.',

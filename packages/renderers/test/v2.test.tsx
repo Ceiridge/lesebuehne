@@ -14,7 +14,7 @@ const anchor = (k: number) => ({ sentenceId: `s${k}`, phrase: 'x' });
 
 describe('M2 plan v2 rendering', () => {
   withDom();
-  test('non-list templates render as list with template hook; highlight moves "current"', () => {
+  test('non-list templates render as SVG diagrams; highlight moves "current"', () => {
     const plan: VisualPlan = {
       ...base,
       mode: 'diagram',
@@ -27,16 +27,16 @@ describe('M2 plan v2 rendering', () => {
     };
     const s2 = visualState(plan, [1, 2, 3], 2.5, 'none', { glossary });
     const s3 = visualState(plan, [1, 2, 3], 3, 'none', { glossary });
-    expect(s2.mode === 'list' && s2.template).toBe('causal-chain');
-    expect(s2.mode === 'list' && s2.items.find((i) => i.current)?.id).toBe('b');
-    expect(s3.mode === 'list' && s3.items.find((i) => i.current)?.id).toBe('a');
-    expect(s3.mode === 'list' && s3.items[0]).toMatchObject({ color: '#aa3300', glyph: '✦', group: 'Ursache' });
+    expect(s2.mode === 'diagram' && s2.template).toBe('causal-chain');
+    expect(s2.mode === 'diagram' && s2.items.find((i) => i.current)?.id).toBe('b');
+    expect(s3.mode === 'diagram' && s3.items.find((i) => i.current)?.id).toBe('a');
+    expect(s3.mode === 'diagram' && s3.items[0]).toMatchObject({ color: '#aa3300', glyph: '✦', group: 'Ursache' });
     {
       const root = document.createElement('div');
       render(<Visual state={s3} />, root);
       expect(root.querySelector('.lb-template-causal-chain')).not.toBeNull();
-      expect(root.querySelector('.lb-list-index')?.textContent).toBe('✦');
-      expect(root.querySelector('.lb-list-detail')?.textContent).toBe('Folge');
+      expect(root.querySelector('.lb-d-glyph')?.textContent).toBe('✦');
+      expect(root.querySelector('.lb-d-detail')?.textContent).toBe('Folge');
     }
   });
 

@@ -156,3 +156,26 @@ describe('T5: API', () => {
     expect((await call(api, 'POST', '/api/auth/unknown/login')).status).toBe(404);
   });
 });
+
+describe('M3: animate endpoint', () => {
+  test('returns a validated program; plan without animation → 503', async () => {
+    const { EXAMPLE_PROGRAM } = await import('@lesebuehne/director');
+    const { api } = setup([new FakeLLM({ id: 'fake', answers: [JSON.stringify({ code: EXAMPLE_PROGRAM, notes: 'n' })] })]);
+    await call(api, 'PUT', `/api/books/${encodeURIComponent(book.id)}`, book);
+    const plan = {
+      version: 'llm-plan-4',
+      mode: 'animation',
+      rationale: 'r',
+      keyTerms: [],
+      fallback: 'kinetic',
+      cues: [],
+      diagram: { template: 'cycle', items: [{ id: 'a', label: 'Mut' }, { id: 'b', label: 'Feigheit' }, { id: 'c', label: 'Faulheit' }] },
+      animation: { brief: 'A wheel turning' },
+    };
+    const r = (await (await call(api, 'POST', '/api/llm/animate', { bookId: book.id, sectionId, plan })).json()) as { program: { code: string }; variants: number };
+    expect(r.program.code).toBe(EXAMPLE_PROGRAM);
+    expect(r.variants).toBe(1);
+    const bad = await call(api, 'POST', '/api/llm/animate', { bookId: book.id, sectionId, plan: { ...plan, mode: 'diagram', animation: undefined } });
+    expect(bad.status).toBe(503);
+  });
+});

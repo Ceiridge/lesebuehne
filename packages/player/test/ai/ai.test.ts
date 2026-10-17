@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { FakeLLM, MemoryCache, ProviderRegistry, type Book, type StyleBible, type VisualPlan } from '@lesebuehne/core';
-import { planSection, type PlanResponse, type StyleResponse } from '@lesebuehne/director';
+import { FakeLLM, MemoryCache, ProviderRegistry, type AnimationProgram, type Book, type StyleBible, type VisualPlan } from '@lesebuehne/core';
+import { EXAMPLE_PROGRAM, planSection, type AnimationResponse, type PlanResponse, type StyleResponse } from '@lesebuehne/director';
 import { createApi, DEFAULT_CONFIG } from '@lesebuehne/server';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -60,12 +60,18 @@ class FakeBackend implements AiBackend {
     const selected = opts.select ?? n - 1;
     return { plan: kinetic(selected === 0 ? 'Mut' : 'Feigheit'), fallback: false, cached: false, variants: n, selected };
   }
+  animations: Array<{ sectionId: string; opts: { regenerate?: boolean; error?: string } }> = [];
+  async animate(_b: Book, sectionId: string, _p: VisualPlan, opts: { regenerate?: boolean; error?: string }): Promise<AnimationResponse> {
+    this.animations.push({ sectionId, opts });
+    const n = this.animations.filter((a) => a.sectionId === sectionId).length;
+    return { program: { version: 'a', code: EXAMPLE_PROGRAM + '\n// v' + n }, cached: false, variants: n, selected: n - 1 };
+  }
   async status() {
     return { chain: ['fake', 'heuristic'], providers: [], budget: { images: 2, animations: 3 } };
   }
 }
 
-function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[string, VisualPlan]>; current: string; t: number } {
+function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[string, VisualPlan]>; animated: Array<[string, AnimationProgram]>; current: string; t: number } {
   const h = {
     book,
     order,
@@ -76,6 +82,8 @@ function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[
     planOf: () => undefined,
     applyPlan: (id: string, plan: VisualPlan): void => void h.applied.push([id, plan]),
     applyStyle: () => undefined,
+    animated: [] as Array<[string, AnimationProgram]>,
+    applyAnimation: (id: string, program: AnimationProgram): void => void h.animated.push([id, program]),
     now: (): number => h.t,
     ...over,
   };
@@ -151,6 +159,67 @@ describe('T6: AI planner', () => {
     await p.selectVariant(s1, -1);
     expect(p.infoOf(s1)?.selected).toBe(0);
     expect(h.applied.at(-1)?.[1].keyTerms).toEqual(['Mut']);
+  });
+});
+
+describe('M3: animations in the planner and session', () => {
+  const animationPlan: VisualPlan = {
+    ...kinetic('Mut'),
+    mode: 'animation',
+    keyTerms: [],
+    diagram: { template: 'cycle', items: [{ id: 'a', label: 'Mut' }, { id: 'b', label: 'Feigheit' }, { id: 'c', label: 'Faulheit' }] },
+    animation: { brief: 'A wheel turning from laziness to courage' },
+  };
+
+  test('an animation plan triggers the animate job; a failure asks once for a fix; R makes a new program', async () => {
+    const backend = new FakeBackend();
+    backend.plan = async () => ({ plan: animationPlan, fallback: false, cached: false, variants: 1, selected: 0 });
+    let plan: VisualPlan | undefined;
+    const h = host({ planOf: () => plan, applyPlan: (_id: string, p: VisualPlan) => void (plan = p) });
+    const p = new AiPlanner(h, backend);
+    p.schedule(order[0]!.id);
+    await settle();
+    expect(backend.animations.map((a) => a.sectionId)).toContain(order[0]!.id);
+    expect(h.animated[0]?.[1].code).toContain('lb.polar');
+    p.animationFailed(order[0]!.id, 'k1', 'boom');
+    p.animationFailed(order[0]!.id, 'k1', 'boom'); // same program: no second repair
+    await settle();
+    expect(backend.animations.filter((a) => a.opts.error === 'boom')).toHaveLength(1);
+    await p.regenerate(order[0]!.id);
+    expect(backend.animations.at(-1)?.opts.regenerate).toBe(true);
+  });
+
+  test('session: invalid code never runs; valid code goes to the stage as an animation state', async () => {
+    const backend = new FakeBackend();
+    setBackend(backend);
+    try {
+      const t = await makeEnv();
+      const session = await openSession(t, bundle);
+      const id = order[0]!.id;
+      session.setAiPlan(id, animationPlan, { source: 'ai', variants: 1, selected: 0 });
+      session.setAnimation(id, { version: 'a', code: 'while (true) {} return function (t) {};' }, { variants: 1, selected: 0 });
+      expect(session.animations.value.get(id)?.status).toBe('failed');
+      expect(stageStep(session, t.timers.now()).current?.mode).toBe('diagram');
+      session.setAnimation(id, { version: 'a', code: EXAMPLE_PROGRAM }, { variants: 2, selected: 1 });
+      const snap = stageStep(session, t.timers.now());
+      expect(snap.current?.mode).toBe('animation');
+      if (snap.current?.mode === 'animation') {
+        expect(snap.current.fallback.mode).toBe('diagram');
+        expect(snap.current.init.items.map((i) => i.label)).toEqual(['Mut', 'Feigheit', 'Faulheit']);
+        // A timeout restarts once in a fresh frame; a second failure falls back to the diagram.
+        session.animationStatus(snap.current.key, { state: 'failed', reason: 'stopped responding' });
+        const retry = stageStep(session, t.timers.now()).current;
+        expect(retry?.mode).toBe('animation');
+        if (retry?.mode === 'animation') {
+          expect(retry.key).not.toBe(snap.current.key);
+          session.animationStatus(retry.key, { state: 'failed', reason: 'stopped responding' });
+        }
+      }
+      expect(stageStep(session, t.timers.now()).current?.mode).toBe('diagram');
+      session.dispose();
+    } finally {
+      setBackend(undefined);
+    }
   });
 });
 

@@ -1,6 +1,9 @@
 import {
+  animationCodeProblems,
   buildTimeline,
+  contentHash,
   glossaryIndex,
+  type AnimationProgram,
   primaryLanguage,
   type Book,
   type BookBundle,
@@ -27,6 +30,19 @@ import type { AppEnv } from './env.ts';
 import { settings } from './store.ts';
 
 export type Panel = 'toc' | 'bookmarks' | 'settings' | 'help';
+
+/** A section's animation program and how the sandbox is doing with it. */
+export interface AnimationEntry {
+  program: AnimationProgram;
+  /** Identity of this program on stage (section + code hash). */
+  key: string;
+  status: 'loading' | 'running' | 'failed';
+  reason?: string;
+  /** Already restarted once after a timeout. */
+  retried?: boolean;
+  variants: number;
+  selected: number;
+}
 
 export const VISUAL_CYCLE: readonly ForcedMode[] = ['auto', 'list', 'kinetic', 'text'];
 
@@ -61,6 +77,8 @@ export class ReaderSession {
   readonly glossary = computed<ReadonlyMap<string, GlossaryConcept>>(() => glossaryIndex(this.styleBible.value));
   /** Where each section's plan came from (AI variants, fallbacks). */
   readonly planInfo = signal<ReadonlyMap<string, PlanInfo>>(new Map());
+  /** Animation programs by section (spec 003). */
+  readonly animations = signal<ReadonlyMap<string, AnimationEntry>>(new Map());
   /** LLM director, when an AI backend is available (B8). */
   ai: AiPlanner | undefined;
   private readonly aiPlans = new Map<string, VisualPlan>();
@@ -120,6 +138,7 @@ export class ReaderSession {
             planOf: (id) => this.plans.value.get(id),
             applyPlan: (id, plan, info) => this.setAiPlan(id, plan, info),
             applyStyle: (sb) => (this.styleBible.value = sb),
+            applyAnimation: (id, program, info) => this.setAnimation(id, program, info),
             now: () => env.timers.now(),
           },
           backend,
@@ -168,6 +187,45 @@ export class ReaderSession {
     this.aiPlans.set(sectionId, plan);
     this.planInfo.value = new Map(this.planInfo.value).set(sectionId, info);
     this.replan(sectionId);
+  }
+
+  /** A new program: checked here too (defence in depth) before it may run. */
+  setAnimation(sectionId: string, program: AnimationProgram, info: { variants: number; selected: number }): void {
+    const key = `${sectionId}#${contentHash(program.code).slice(0, 12)}`;
+    const problems = animationCodeProblems(program.code);
+    const entry: AnimationEntry = problems.length
+      ? { program, key, status: 'failed', reason: problems.join('; '), ...info }
+      : { program, key, status: 'loading', ...info };
+    this.animations.value = new Map(this.animations.value).set(sectionId, entry);
+    if (problems.length) this.ai?.animationFailed(sectionId, key, entry.reason!);
+  }
+
+  /** Status from the sandbox; a failure asks once for a corrected program. */
+  animationStatus(key: string, status: { state: 'loading' | 'running' | 'failed'; reason?: string }): void {
+    for (const [sectionId, e] of this.animations.value) {
+      if (e.key !== key || e.status === status.state) continue;
+      // A timeout is usually a slow start (cold page, busy tab), not a broken program: retry once
+      // in a fresh frame (new key) before asking the LLM for a fix.
+      if (status.state === 'failed' && /did not start|stopped responding/u.test(status.reason ?? '') && !e.retried) {
+        this.animations.value = new Map(this.animations.value).set(sectionId, { ...e, key: `${e.key}~retry`, status: 'loading', retried: true });
+        continue;
+      }
+      const next: AnimationEntry = { ...e, status: status.state, ...(status.reason ? { reason: status.reason } : {}) };
+      this.animations.value = new Map(this.animations.value).set(sectionId, next);
+      if (status.state === 'failed') this.ai?.animationFailed(sectionId, key, status.reason ?? 'failed');
+    }
+  }
+
+  private readonly starts = new Map<string, number>();
+
+  /** Book time (τ) where a section starts. */
+  sectionStart(sectionId: string): number {
+    let s = this.starts.get(sectionId);
+    if (s === undefined) {
+      s = this.timeline.entries.find((e) => e.sectionId === sectionId)?.start ?? 0;
+      this.starts.set(sectionId, s);
+    }
+    return s;
   }
 
   /** Stage key of a section's current plan (`id` or `id@rev`). */

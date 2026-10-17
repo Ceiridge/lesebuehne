@@ -329,8 +329,11 @@ export function toVisualPlan(
     }
     const anchor = { sentenceId: s.sentence.id, phrase };
     const at = s.sentence.text.indexOf(phrase);
-    if ((c.action === 'reveal' || c.action === 'highlight') && items.has(c.target)) {
+    const [from, to] = c.target.split('>').map((x) => x.trim());
+    if ((c.action === 'reveal' || c.action === 'highlight' || c.action === 'dim') && items.has(c.target)) {
       cues.push({ anchor, action: { type: c.action, itemId: c.target }, order: s.order, at });
+    } else if (c.action === 'connect' && from && to && items.has(from) && items.has(to)) {
+      cues.push({ anchor, action: { type: 'connect', from, to }, order: s.order, at });
     } else if (c.action === 'showTerm') {
       const term = keyTerms.find((k) => k.toLowerCase() === c.target.toLowerCase()) ?? verbatimIn(text, c.target);
       if (!term) {

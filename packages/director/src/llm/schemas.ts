@@ -44,8 +44,8 @@ export const LlmPlanSchema = z.object({
       z.object({
         sentence: z.string().regex(/^s\d+$/u),
         phrase: z.string().min(1).max(80),
-        action: z.enum(['reveal', 'highlight', 'showTerm', 'focus']),
-        /** Item id (reveal/highlight), term (showTerm) or region id (focus). */
+        action: z.enum(['reveal', 'highlight', 'connect', 'dim', 'showTerm', 'focus']),
+        /** Item id (reveal/highlight/dim), "from>to" item ids (connect), term (showTerm) or region id (focus). */
         target: z.string().min(1).max(80),
       }),
     )

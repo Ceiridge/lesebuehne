@@ -11,6 +11,7 @@ export function DebugOverlay({ session, plan, tau }: { session: ReaderSession; p
   const p = session.engine.position.value;
   const info = session.planInfo.value.get(sectionId);
   const meta = plan.meta;
+  const anim = plan.mode === 'animation' ? session.animations.value.get(sectionId) : undefined;
   const source = meta ? `${meta.providerId}${meta.model ? ` · ${meta.model}` : ''} · ${meta.promptVersion}` : `${t('debug.heuristic')} · ${plan.version}`;
   return (
     <aside class="debug" aria-label={t('debug.title')}>
@@ -27,6 +28,16 @@ export function DebugOverlay({ session, plan, tau }: { session: ReaderSession; p
           {info?.source === 'ai' && info.variants > 1 ? ` · ${t('debug.variant', { n: info.selected + 1, total: info.variants })}` : ''}
           {info?.error ? ` · ${t('debug.fallback')}` : ''}
         </dd>
+        {plan.mode === 'animation' ? (
+          <>
+            <dt>{t('debug.animation')}</dt>
+            <dd>
+              {anim
+                ? `${anim.status}${anim.reason ? ` (${anim.reason})` : ''} · ${anim.program.code.length} chars${anim.variants > 1 ? ` · ${t('debug.variant', { n: anim.selected + 1, total: anim.variants })}` : ''}`
+                : t('debug.animationPending')}
+            </dd>
+          </>
+        ) : null}
         <dt>{t('debug.rationale')}</dt>
         <dd>{plan.rationale}</dd>
         {meta?.dropped?.length ? (
@@ -86,7 +97,10 @@ function cueLabel(a: CueAction): string {
   switch (a.type) {
     case 'reveal':
     case 'highlight':
+    case 'dim':
       return `${a.type} ${a.itemId}`;
+    case 'connect':
+      return `connect ${a.from}→${a.to}`;
     case 'showTerm':
       return `term “${a.term}”`;
     case 'focus':

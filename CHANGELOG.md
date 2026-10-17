@@ -1,5 +1,21 @@
 # Changelog
 
+## M3 – Diagrams and animations (2026-10-17)
+
+Try it: `bun run dev`, open the Kybalion sample, jump to "The Principle of Rhythm" (Shift+→) and wait
+a moment: the director picks an animation and the stage shows a swinging pendulum.
+
+- Diagram engine: twelve templates laid out as SVG (process, causal chain, timeline, cycle, spectrum,
+  comparison, hierarchy, matrix, Venn, network, equation, plus the list), with wrapped labels,
+  glossary colours and glyph badges, Style Bible accents, and new cues `connect` and `dim`; too many
+  items fall back to the list.
+- Animations: the director writes a program for `animation` plans; it runs in a sandboxed iframe
+  (opaque origin, CSP without network) on a small library (shapes, labels, easing, cue times), is
+  checked statically before running, and is watched (start and response timeouts). Failures keep
+  the diagram, restart once after a timeout, or request one corrected program. Cached with variants.
+- Fixes: duplicate diagram item ids no longer fail a plan; the sandbox stays transparent in the
+  dark theme.
+
 ## M2 – Providers, local server, LLM director (2026-10-17)
 
 Try it: `bun run samples && bun run dev`, open a sample; with a ChatGPT sign-in from OpenCode or the

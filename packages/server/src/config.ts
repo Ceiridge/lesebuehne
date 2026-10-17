@@ -4,6 +4,8 @@ import { join } from 'node:path';
 export interface TaskModels {
   plan?: string;
   style?: string;
+  /** Animation programs (code): often worth a stronger model. */
+  animate?: string;
 }
 
 export interface ServerConfig {

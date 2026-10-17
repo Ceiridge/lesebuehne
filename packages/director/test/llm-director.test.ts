@@ -196,3 +196,55 @@ test('T4: LLM schemas convert to strict JSON Schema', async () => {
   expect(() => jsonSchemaOf(LlmPlanSchema)).not.toThrow();
   expect(() => jsonSchemaOf(LlmStyleBibleSchema)).not.toThrow();
 });
+
+describe('M3: animate task', () => {
+  const animPlan = async () => {
+    const answer = basePlan({ mode: 'animation', diagram, animation: { brief: 'Two causes push towards immaturity, like weights on a scale' } });
+    return planSectionLLM(section, book, {}, completeWith(new FakeLLM({ answers: [JSON.stringify(answer)] })), signal);
+  };
+
+  test('valid program on the first answer; invalid code triggers the one repair', async () => {
+    const { EXAMPLE_PROGRAM, animateSection, DirectorService } = await import('../src/index.ts');
+    const { MemoryCache } = await import('@lesebuehne/core');
+    const plan = await animPlan();
+    expect(plan.mode).toBe('animation');
+    const bad = JSON.stringify({ code: 'while (true) {}\nreturn function (t) {};', notes: 'n' });
+    const good = JSON.stringify({ code: EXAMPLE_PROGRAM, notes: 'pendulum' });
+    const fake = new FakeLLM({ answers: [bad, good] });
+    const program = await animateSection(section, book, plan, {}, completeWith(fake), signal);
+    expect(fake.requests).toHaveLength(2);
+    expect(fake.requests[0]!.user).toContain('Animation brief: Two causes');
+    expect(fake.requests[0]!.user).toContain('0: faul "Faulheit"');
+    expect(program.code).toBe(EXAMPLE_PROGRAM);
+    expect(program.meta?.providerId).toBe('fake-llm');
+
+    // Service: cached, regenerate adds a variant, a runtime error asks for a corrected one.
+    const svc = new DirectorService({ complete: () => completeWith(new FakeLLM({ answers: [good] })), cache: new MemoryCache(), chainId: 'x' });
+    const a1 = await svc.animate(book, section.id, plan, {}, signal);
+    const a2 = await svc.animate(book, section.id, plan, {}, signal);
+    expect([a1.cached, a2.cached]).toEqual([false, true]);
+    const fixer = new FakeLLM({ answers: [good] });
+    const svc2 = new DirectorService({ complete: () => completeWith(fixer), cache: new MemoryCache(), chainId: 'x' });
+    const a3 = await svc2.animate(book, section.id, plan, { error: 'lb.foo is not a function' }, signal);
+    expect(a3.variants).toBe(1);
+    expect(fixer.requests[0]!.user).toContain('failed at runtime with: lb.foo is not a function');
+    await expect(svc.animate(book, section.id, { ...plan, mode: 'diagram' }, {}, signal)).rejects.toThrow('no animation');
+  });
+
+  test('plan schema accepts connect and dim cues', async () => {
+    const answer = basePlan({
+      diagram,
+      cues: [
+        { sentence: 's2', phrase: 'Faulheit', action: 'connect', target: 'faul>unm' },
+        { sentence: 's2', phrase: 'Feigheit', action: 'dim', target: 'feig' },
+        { sentence: 's2', phrase: 'Ursachen', action: 'connect', target: 'faul>nope' },
+      ],
+    });
+    const plan = await planSectionLLM(section, book, {}, completeWith(new FakeLLM({ answers: [JSON.stringify(answer)] })), signal);
+    expect(plan.cues.map((c) => c.action)).toEqual([
+      { type: 'connect', from: 'faul', to: 'unm' },
+      { type: 'dim', itemId: 'feig' },
+    ]);
+    expect(plan.meta?.dropped?.some((d) => d.includes('faul>nope'))).toBe(true);
+  });
+});

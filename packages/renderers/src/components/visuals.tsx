@@ -1,4 +1,6 @@
 import type { DiagramTemplate } from '@lesebuehne/core';
+import { AnimationView, type AnimationStatusListener } from './animation.tsx';
+import { DiagramView } from './diagram.tsx';
 import type { ItemState, TermState, VisualState } from '../state/visual-state.ts';
 
 /** List diagram: items appear one by one at their cue; the newest one is marked. */
@@ -10,9 +12,9 @@ export function ListDiagram({ title, items, template = 'list' }: { title?: strin
         {items.map((item, k) => (
           <li
             key={item.id}
-            class={item.current ? 'lb-list-item is-current' : 'lb-list-item'}
+            class={`lb-list-item${item.current ? ' is-current' : ''}${item.dimmed ? ' is-dimmed' : ''}`}
             style={{
-              opacity: item.opacity,
+              opacity: item.opacity * (item.dimmed ? 0.4 : 1),
               transform: `translateY(${item.offsetY.toFixed(2)}px)`,
               ...(item.color ? { '--lb-concept': item.color } : {}),
             }}
@@ -75,8 +77,12 @@ export function TitleCard({ title }: { title?: string | undefined }) {
 }
 
 /** One visual state; "none" shows the section's heading as a title card. */
-export function Visual({ state, title }: { state: VisualState; title?: string | undefined }) {
+export function Visual({ state, title, onAnimationStatus }: { state: VisualState; title?: string | undefined; onAnimationStatus?: AnimationStatusListener | undefined }) {
+  if (state.mode === 'animation') {
+    return <AnimationView key={state.key} state={state} fallback={<Visual state={state.fallback} title={title} />} onStatus={onAnimationStatus} />;
+  }
   if (state.mode === 'list') return <ListDiagram {...(state.title ? { title: state.title } : {})} items={state.items} template={state.template} />;
+  if (state.mode === 'diagram') return <DiagramView state={state} />;
   if (state.mode === 'quote') return <QuoteCard text={state.text} opacity={state.opacity} />;
   // Before the first key term is spoken the stage shows where we are, not an empty canvas.
   if (state.mode === 'kinetic' && state.terms.length > 0) return <KineticType terms={state.terms} />;
@@ -90,23 +96,25 @@ export function StageView({
   fade,
   currentTitle,
   previousTitle,
+  onAnimationStatus,
 }: {
   current: VisualState | null;
   previous: VisualState | null;
   fade: number;
   currentTitle?: string | undefined;
   previousTitle?: string | undefined;
+  onAnimationStatus?: AnimationStatusListener | undefined;
 }) {
   return (
     <div class="lb-stage-layers">
       {previous && fade < 1 ? (
         <div class="lb-stage-layer" style={{ opacity: 1 - fade }}>
-          <Visual state={previous} title={previousTitle} />
+          <Visual state={previous} title={previousTitle} onAnimationStatus={onAnimationStatus} />
         </div>
       ) : null}
       {current ? (
         <div class="lb-stage-layer" style={{ opacity: previous ? fade : 1 }}>
-          <Visual state={current} title={currentTitle} />
+          <Visual state={current} title={currentTitle} onAnimationStatus={onAnimationStatus} />
         </div>
       ) : null}
     </div>

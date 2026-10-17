@@ -1,8 +1,10 @@
-import { MemoryCache, ProviderRegistry, type Book, type LLMProvider, type ProviderStats, type ResultCache } from '@lesebuehne/core';
+import { MemoryCache, ProviderRegistry, type Book, type LLMProvider, type ProviderStats, type ResultCache, type VisualPlan } from '@lesebuehne/core';
 import {
   DEFAULT_BUDGET,
   DirectorService,
   registryComplete,
+  type AnimateOptions,
+  type AnimationResponse,
   type PlanBudget,
   type PlanOptions,
   type PlanResponse,
@@ -39,6 +41,8 @@ export interface AiBackend {
   readonly mode: 'server' | 'browser';
   prepare(book: Book, opts: VariantOptions, signal: AbortSignal): Promise<StyleResponse>;
   plan(book: Book, sectionId: string, opts: PlanOptions, signal: AbortSignal): Promise<PlanResponse>;
+  /** Animation program for an `animation` plan (throws when none could be written). */
+  animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse>;
   status(): Promise<BackendStatus>;
   /** Starts an own sign-in on the server; returns the URL to open. */
   login?(providerId: string): Promise<string>;
@@ -111,6 +115,10 @@ export class ServerBackend implements AiBackend {
     return this.withBook(book, () => this.post<PlanResponse>('api/llm/plan', { bookId: book.id, sectionId, ...opts }, signal));
   }
 
+  animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse> {
+    return this.withBook(book, () => this.post<AnimationResponse>('api/llm/animate', { bookId: book.id, sectionId, plan, ...opts }, signal));
+  }
+
   async status(): Promise<BackendStatus> {
     const [caps, usage] = await Promise.all([
       this.http(this.url('api/capabilities')).then((r) => readJson<{ chains: { llm: string[] }; budget?: PlanBudget; providers: ProviderStatus[] }>(r)),
@@ -166,6 +174,10 @@ export class BrowserBackend implements AiBackend {
 
   plan(book: Book, sectionId: string, opts: PlanOptions, signal: AbortSignal): Promise<PlanResponse> {
     return this.service.plan(book, sectionId, opts, signal);
+  }
+
+  animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse> {
+    return this.service.animate(book, sectionId, plan, opts, signal);
   }
 
   async status(): Promise<BackendStatus> {

@@ -163,6 +163,8 @@ export const de = {
   'debug.variant': 'Variante {n}/{total}',
   'debug.fallback': 'KI nicht erreichbar',
   'debug.dropped': 'Verworfen',
+  'debug.animation': 'Animation',
+  'debug.animationPending': 'wird geschrieben …',
   'debug.regenerate': 'Neu erzeugen',
   'ai.title': 'KI-Regie',
   'ai.enabled': 'KI-Visualisierungen',

@@ -1,4 +1,6 @@
 import { conceptFor, type DiagramTemplate, type GlossaryConcept, type VisualPlan } from '@lesebuehne/core';
+import type { AnimationInit } from '../animation/host.ts';
+import { effectiveTemplate, sceneFor, type Scene } from '../diagram/layout.ts';
 
 /** Motion level (B8 settings, `prefers-reduced-motion`). */
 export type Motion = 'full' | 'reduced' | 'none';
@@ -17,6 +19,8 @@ export interface ItemState {
   offsetY: number;
   /** The most recently revealed or highlighted item. */
   current: boolean;
+  /** Faded back by a `dim` cue (until highlighted again). */
+  dimmed: boolean;
   group?: string;
   detail?: string;
   /** Glossary colour and glyph (Style Bible). */
@@ -34,19 +38,31 @@ export interface TermState {
   glyph?: string;
 }
 
+export interface EdgeState {
+  from: string;
+  to: string;
+  /** Drawing progress 0 … 1. */
+  progress: number;
+}
+
 /**
- * What the stage draws. Every diagram template renders as a list for now (`template` is a CSS hook);
- * image and animation plans render their fallback until their renderers exist (M3).
+ * What the stage draws: the list (HTML) or a laid-out SVG diagram for the other templates; image
+ * plans render their fallback until the image renderer exists (M5).
  */
 export type VisualState =
   | { mode: 'list'; template: DiagramTemplate; title?: string; items: ItemState[] }
+  | { mode: 'diagram'; template: DiagramTemplate; title?: string; scene: Scene; items: ItemState[]; edges: EdgeState[] }
   | { mode: 'kinetic'; terms: TermState[] }
   | { mode: 'quote'; text: string; opacity: number }
+  /** An LLM-written program in the sandbox; `fallback` is drawn until it runs (and if it fails). */
+  | { mode: 'animation'; key: string; code: string; t: number; init: AnimationInit; fallback: VisualState }
   | { mode: 'none' };
 
 export interface VisualOptions {
   /** Glossary lookup (`glossaryIndex(styleBible)`) for colours and glyphs. */
   glossary?: ReadonlyMap<string, GlossaryConcept>;
+  /** The section's animation program (animation plans only). */
+  animation?: { key: string; code: string; sectionStart: number; palette: AnimationInit['palette'] };
 }
 
 const tint = (label: string, glossary: VisualOptions['glossary']): { color?: string; glyph?: string } => {
@@ -75,37 +91,66 @@ export function cueProgress(cueTime: number, t: number, motion: Motion): number 
  */
 export function visualState(plan: VisualPlan, cueTimes: readonly number[], t: number, motion: Motion, options: VisualOptions = {}): VisualState {
   const travel = motion === 'full' ? 1 : 0;
-  const { glossary } = options;
+  const { glossary, animation } = options;
+  if (plan.mode === 'animation' && animation) {
+    const fallback = visualState(plan, cueTimes, t, motion, glossary ? { glossary } : {});
+    const items = (plan.diagram?.items ?? []).map((i) => ({ id: i.id, label: i.label, ...(i.group ? { group: i.group } : {}), ...tint(i.label, glossary) }));
+    return {
+      mode: 'animation',
+      key: animation.key,
+      code: animation.code,
+      t: t - animation.sectionStart,
+      init: { cues: cueTimes.map((c) => c - animation.sectionStart), items, terms: plan.keyTerms, palette: animation.palette, motion },
+      fallback,
+    };
+  }
   if ((plan.mode === 'diagram' || plan.mode === 'animation') && plan.diagram) {
     const revealAt = new Map<string, number>();
+    const connectAt = new Map<string, number>();
+    /** Latest dim / highlight per item that has happened by `t`. */
+    const lastMark = new Map<string, { time: number; dim: boolean }>();
     let currentId: string | undefined;
     let currentTime = -Infinity;
     for (const [k, cue] of plan.cues.entries()) {
       const a = cue.action;
-      if (a.type !== 'reveal' && a.type !== 'highlight') continue;
       const time = cueTimes[k] ?? 0;
+      if (a.type === 'connect') {
+        const key = `${a.from}>${a.to}`;
+        if (!connectAt.has(key)) connectAt.set(key, time);
+        continue;
+      }
+      if (a.type !== 'reveal' && a.type !== 'highlight' && a.type !== 'dim') continue;
       if (a.type === 'reveal' && !revealAt.has(a.itemId)) revealAt.set(a.itemId, time);
-      if (time <= t && time >= currentTime) [currentId, currentTime] = [a.itemId, time];
+      if (time > t) continue;
+      const prev = lastMark.get(a.itemId);
+      if (!prev || time >= prev.time) lastMark.set(a.itemId, { time, dim: a.type === 'dim' });
+      if (a.type !== 'dim' && time >= currentTime) [currentId, currentTime] = [a.itemId, time];
     }
-    return {
-      mode: 'list',
-      template: plan.diagram.template,
-      ...(plan.diagram.title ? { title: plan.diagram.title } : {}),
-      items: plan.diagram.items.map((item) => {
-        const at = revealAt.get(item.id);
-        const p = at === undefined ? 1 : cueProgress(at, t, motion);
-        return {
-          id: item.id,
-          label: item.label,
-          opacity: p,
-          offsetY: (1 - p) * 14 * travel,
-          current: item.id === currentId,
-          ...(item.group ? { group: item.group } : {}),
-          ...(item.detail ? { detail: item.detail } : {}),
-          ...tint(item.label, glossary),
-        };
-      }),
-    };
+    if (currentId && lastMark.get(currentId)?.dim) currentId = undefined;
+    const items: ItemState[] = plan.diagram.items.map((item) => {
+      const at = revealAt.get(item.id);
+      const p = at === undefined ? 1 : cueProgress(at, t, motion);
+      return {
+        id: item.id,
+        label: item.label,
+        opacity: p,
+        offsetY: (1 - p) * 14 * travel,
+        current: item.id === currentId,
+        dimmed: lastMark.get(item.id)?.dim ?? false,
+        ...(item.group ? { group: item.group } : {}),
+        ...(item.detail ? { detail: item.detail } : {}),
+        ...tint(item.label, glossary),
+      };
+    });
+    const title = plan.diagram.title ? { title: plan.diagram.title } : {};
+    if (effectiveTemplate(plan.diagram) === 'list') return { mode: 'list', template: plan.diagram.template, ...title, items };
+    const scene = sceneFor(plan.diagram);
+    // An edge without its own connect cue is drawn once both endpoints are there.
+    const edges: EdgeState[] = scene.edges.map((e) => {
+      const at = connectAt.get(`${e.from}>${e.to}`) ?? Math.max(revealAt.get(e.from) ?? -Infinity, revealAt.get(e.to) ?? -Infinity);
+      return { from: e.from, to: e.to, progress: at === -Infinity ? 1 : cueProgress(at, t, motion) };
+    });
+    return { mode: 'diagram', template: scene.template, ...title, scene, items, edges };
   }
   if (plan.mode === 'quote' && plan.quote) return { mode: 'quote', text: plan.quote.phrase, opacity: 1 };
   // Kinetic, and the fallback of image/animation plans without a renderer: their key terms.

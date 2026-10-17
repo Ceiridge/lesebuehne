@@ -1915,3 +1915,157 @@ kbd {
   gap: 4px;
   margin: 4px 0;
 }
+
+/* ---------- SVG diagrams (M3) ---------- */
+
+.stage {
+  --lb-accent: var(--c-stage-accent);
+  --lb-accent2: color-mix(in srgb, var(--c-stage-accent) 45%, var(--c-stage-text));
+}
+.lb-visual.lb-diagram {
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.lb-diagram svg {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  overflow: visible;
+  font-family: var(--font-reading);
+}
+.lb-d-node {
+  --lb-node: var(--lb-concept, var(--lb-accent));
+  transition: opacity var(--dur-base);
+}
+.lb-d-shape {
+  fill: color-mix(in srgb, var(--c-surface) 86%, var(--lb-node) 4%);
+  stroke: color-mix(in srgb, var(--lb-node) 55%, var(--c-border));
+  stroke-width: 2.5;
+  transition: stroke var(--dur-base), stroke-width var(--dur-base);
+}
+.lb-d-shape.is-current {
+  stroke: var(--lb-node);
+  stroke-width: 5;
+  fill: color-mix(in srgb, var(--c-surface) 80%, var(--lb-node) 12%);
+}
+.lb-d-dot {
+  fill: var(--lb-node);
+  stroke: var(--c-stage-bg);
+  stroke-width: 4;
+}
+.lb-d-label {
+  fill: var(--c-stage-text);
+  font-weight: 600;
+}
+.lb-d-node.is-current .lb-d-label {
+  fill: color-mix(in srgb, var(--lb-node) 35%, var(--c-stage-text));
+}
+.lb-d-caption,
+.lb-d-detail {
+  fill: color-mix(in srgb, var(--c-stage-text) 62%, transparent);
+  font: 600 22px var(--font-ui);
+  letter-spacing: 0.04em;
+}
+.lb-d-caption {
+  text-transform: uppercase;
+  font-size: 18px;
+}
+.lb-d-badge circle {
+  fill: var(--lb-node);
+}
+.lb-d-glyph {
+  fill: var(--c-on-accent);
+  font: 700 22px var(--font-ui);
+}
+.lb-d-caption {
+  font-size: 22px;
+}
+.lb-d-title {
+  fill: var(--c-stage-text);
+  font: 700 46px var(--font-reading);
+}
+.lb-d-line {
+  fill: none;
+  stroke: color-mix(in srgb, var(--lb-accent) 70%, var(--c-stage-text));
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.lb-d-line.is-dashed {
+  stroke-dasharray: 10 12;
+  stroke-width: 3;
+}
+.lb-d-arrowhead {
+  fill: color-mix(in srgb, var(--lb-accent) 70%, var(--c-stage-text));
+}
+.lb-d-edge-label {
+  fill: color-mix(in srgb, var(--c-stage-text) 70%, transparent);
+  font: 600 22px var(--font-ui);
+  paint-order: stroke;
+  stroke: var(--c-stage-bg);
+  stroke-width: 6px;
+}
+.lb-d-decor.tone-muted {
+  stroke: var(--c-border);
+}
+.lb-d-decor.tone-accent {
+  stroke: var(--lb-accent);
+}
+.lb-d-grad-a {
+  stop-color: var(--lb-accent2);
+}
+.lb-d-grad-b {
+  stop-color: var(--lb-accent);
+}
+.lb-d-set {
+  fill: none;
+  stroke-width: 3;
+}
+.lb-d-set.is-filled.tone-accent {
+  fill: color-mix(in srgb, var(--lb-accent) 10%, transparent);
+  stroke: color-mix(in srgb, var(--lb-accent) 60%, transparent);
+}
+.lb-d-set.is-filled.tone-muted {
+  fill: color-mix(in srgb, var(--lb-accent2) 10%, transparent);
+  stroke: color-mix(in srgb, var(--lb-accent2) 60%, transparent);
+}
+.lb-d-text.tone-accent {
+  fill: var(--lb-accent);
+}
+.lb-d-text.tone-muted {
+  fill: var(--c-muted);
+}
+.lb-d-text.tone-ink {
+  fill: var(--c-stage-text);
+}
+
+/* ---------- Animations (M3) ---------- */
+
+.lb-visual.lb-animation {
+  position: relative;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+}
+.lb-animation-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.lb-animation-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  /* The sandbox document supports light and dark, so it matches the inherited scheme and stays
+     transparent (a mismatch makes the browser paint an opaque canvas). */
+  background: transparent;
+  transition: opacity var(--dur-slow);
+}
+.lb-animation.is-loading .lb-animation-frame {
+  opacity: 0;
+}

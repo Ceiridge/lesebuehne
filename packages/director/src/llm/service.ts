@@ -1,4 +1,5 @@
-import { addVariant, selectedValue, type Book, type CacheEntry, type ProviderRegistry, type ResultCache, type StyleBible, type VisualPlan } from '@lesebuehne/core';
+import { addVariant, selectedValue, type AnimationProgram, type Book, type CacheEntry, type ProviderRegistry, type ResultCache, type StyleBible, type VisualPlan } from '@lesebuehne/core';
+import { animateSection, animationCacheKey } from './animate.ts';
 import { planSection } from '../heuristic.ts';
 import { DEFAULT_BUDGET, planCacheKey, planSectionLLM, prepareBook, styleCacheKey, type Complete, type PlanBudget } from './director.ts';
 
@@ -30,13 +31,22 @@ export interface VariantOptions {
   select?: number;
 }
 
+export interface AnimationResponse extends VariantInfo {
+  program: AnimationProgram;
+}
+
+export interface AnimateOptions extends VariantOptions {
+  /** Runtime error of the selected variant: generate a corrected one. */
+  error?: string;
+}
+
 export interface PlanOptions extends VariantOptions {
   previous?: VisualPlan;
   budget?: PlanBudget;
 }
 
 export type DirectorEvent =
-  | { job: 'style' | 'plan'; state: 'start' | 'done' | 'error'; key: string; sectionId?: string; providerId?: string; fallback?: boolean };
+  | { job: 'style' | 'plan' | 'animate'; state: 'start' | 'done' | 'error'; key: string; sectionId?: string; providerId?: string; fallback?: boolean };
 
 /**
  * Style Bible and section plans with cache, variants and the heuristic fallback (B5, B6). The
@@ -47,7 +57,7 @@ export class DirectorService {
 
   constructor(
     private readonly o: {
-      complete: (task: 'plan' | 'style') => Complete;
+      complete: (task: 'plan' | 'style' | 'animate') => Complete;
       cache: ResultCache;
       /** Identifies the provider chain in cache keys. */
       chainId: string;
@@ -100,6 +110,43 @@ export class DirectorService {
     return { styleBible: selectedValue(fresh)!, cached: false, variants: fresh.variants.length, selected: fresh.selected };
   }
 
+  /**
+   * Animation program for a section's `animation` plan; throws when no provider could write a valid
+   * one (the stage keeps the diagram). With `error`, a corrected variant is generated.
+   */
+  async animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse> {
+    const section = book.chapters.flatMap((c) => c.sections).find((x) => x.id === sectionId);
+    if (!section) throw new Error(`unknown section ${sectionId}`);
+    if (plan.mode !== 'animation' || !plan.animation) throw new Error('plan has no animation');
+    const styleBible = await this.styleBible(book);
+    const key = animationCacheKey(section, book, plan, styleBible, this.o.chainId);
+    const entry = await this.variant<AnimationProgram>(key, opts.select);
+    const fresh = !!opts.regenerate || !!opts.error;
+    if (entry && !fresh) return { program: selectedValue(entry)!, cached: true, variants: entry.variants.length, selected: entry.selected };
+    const next = await this.once(`${key}:${fresh ? 'r' : ''}`, async () => {
+      this.o.onEvent?.({ job: 'animate', state: 'start', key, sectionId });
+      try {
+        const program = await animateSection(
+          section,
+          book,
+          plan,
+          { ...(styleBible ? { styleBible } : {}), ...(opts.error ? { error: opts.error } : {}) },
+          this.o.complete('animate'),
+          signal,
+        );
+        const e = addVariant(await this.o.cache.get<AnimationProgram>(key), program, program.meta?.providerId ?? '?', program.meta?.model);
+        await this.o.cache.put(key, e);
+        this.o.onEvent?.({ job: 'animate', state: 'done', key, sectionId, ...(program.meta ? { providerId: program.meta.providerId } : {}) });
+        this.o.log?.(`animate ${sectionId} ← ${program.meta?.providerId} (${program.code.length} chars)`);
+        return e;
+      } catch (err) {
+        this.o.onEvent?.({ job: 'animate', state: 'error', key, sectionId });
+        throw err;
+      }
+    });
+    return { program: selectedValue(next)!, cached: false, variants: next.variants.length, selected: next.selected };
+  }
+
   /** LLM plan of a section, or the heuristic plan when the chain is exhausted. Aborts rethrow. */
   async plan(book: Book, sectionId: string, opts: PlanOptions, signal: AbortSignal): Promise<PlanResponse> {
     const section = book.chapters.flatMap((c) => c.sections).find((s) => s.id === sectionId);
@@ -145,8 +192,8 @@ export class DirectorService {
 export function registryComplete(
   registry: ProviderRegistry,
   chain: readonly string[],
-  taskModel: (providerId: string, task: 'plan' | 'style') => string | undefined = () => undefined,
-): (task: 'plan' | 'style') => Complete {
+  taskModel: (providerId: string, task: 'plan' | 'style' | 'animate') => string | undefined = () => undefined,
+): (task: 'plan' | 'style' | 'animate') => Complete {
   return (task) => async (req) => {
     const r = await registry.run(
       'llm',

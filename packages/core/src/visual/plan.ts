@@ -8,6 +8,10 @@ export const CueActionSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('highlight'), itemId: z.string().min(1) }),
   z.strictObject({ type: z.literal('showTerm'), term: z.string().min(1) }),
   z.strictObject({ type: z.literal('focus'), regionId: z.string().min(1) }),
+  /** Draw the edge between two diagram items. */
+  z.strictObject({ type: z.literal('connect'), from: z.string().min(1), to: z.string().min(1) }),
+  /** Let an item recede (after the text moved on from it). */
+  z.strictObject({ type: z.literal('dim'), itemId: z.string().min(1) }),
 ]);
 
 export const CueSchema = z.strictObject({
@@ -122,7 +126,10 @@ export const VisualPlanSchema = z
     const regions = new Set(plan.image?.focusRegions.map((r) => r.id) ?? []);
     for (const [k, cue] of plan.cues.entries()) {
       const a = cue.action;
-      if ((a.type === 'reveal' || a.type === 'highlight') && !items.has(a.itemId)) {
+      if (a.type === 'connect' && (!items.has(a.from) || !items.has(a.to))) {
+        ctx.addIssue({ code: 'custom', path: ['cues', k, 'action'], message: 'unknown edge endpoint' });
+      }
+      if ((a.type === 'reveal' || a.type === 'highlight' || a.type === 'dim') && !items.has(a.itemId)) {
         ctx.addIssue({ code: 'custom', path: ['cues', k, 'action', 'itemId'], message: 'unknown item' });
       }
       if (a.type === 'focus' && !regions.has(a.regionId)) {
