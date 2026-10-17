@@ -1,0 +1,24 @@
+{
+  "name": "@lesebuehne/ingest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lesebuehne/core": "workspace:*",
+    "domhandler": "6.0.1",
+    "fflate": "0.8.3",
+    "htmlparser2": "12.0.0",
+    "mdast-util-from-markdown": "2.0.3",
+    "mdast-util-gfm-footnote": "2.1.0",
+    "micromark-extension-gfm-footnote": "2.1.0",
+    "micromark-util-decode-string": "2.0.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/mdast": "4.0.4",
+    "domutils": "4.0.2"
+  }
+}

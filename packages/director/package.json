@@ -1,0 +1,15 @@
+{
+  "name": "@lesebuehne/director",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lesebuehne/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@lesebuehne/ingest": "workspace:*"
+  }
+}

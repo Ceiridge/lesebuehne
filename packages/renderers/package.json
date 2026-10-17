@@ -1,0 +1,17 @@
+{
+  "name": "@lesebuehne/renderers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@lesebuehne/core": "workspace:*",
+    "preact": "10.29.8"
+  },
+  "devDependencies": {
+    "@lesebuehne/director": "workspace:*",
+    "@lesebuehne/ingest": "workspace:*"
+  }
+}

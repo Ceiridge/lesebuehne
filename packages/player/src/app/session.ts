@@ -1,0 +1,239 @@
+import { buildTimeline, primaryLanguage, type Book, type BookBundle, type Section, type Timeline, type VisualPlan } from '@lesebuehne/core';
+import { planSection, type ForcedMode } from '@lesebuehne/director';
+import { resolveCueTimes, StageScheduler } from '@lesebuehne/renderers';
+import { batch, signal } from '@preact/signals';
+import { PlayerEngine, type Position } from '../engine/engine.ts';
+import { selectVoice, type VoiceChoice, type VoiceInfo } from '../engine/voices.ts';
+import { autoFollow, type FollowEvent, type FollowState } from '../nav/follow.ts';
+import { headingAt } from '../nav/navigation.ts';
+import type { Bookmark, VisualOverrides } from '../storage/repository.ts';
+import type { LibraryService } from '../storage/library.ts';
+import { DURATIONS } from '../theme/tokens.ts';
+import type { AppEnv } from './env.ts';
+import { settings } from './store.ts';
+
+export type Panel = 'toc' | 'bookmarks' | 'settings' | 'help';
+
+export const VISUAL_CYCLE: readonly ForcedMode[] = ['auto', 'list', 'kinetic', 'text'];
+
+export interface OpenOptions {
+  /** false → open for this session only (not saved, B6). */
+  saved: boolean;
+  basicLanguage: boolean;
+}
+
+/** Everything about one open book: model, timeline, engine, plans, bookmarks, UI panels. */
+export class ReaderSession {
+  readonly book: Book;
+  readonly timeline: Timeline;
+  readonly engine: PlayerEngine;
+  readonly stage: StageScheduler;
+  readonly plans = signal<Map<string, VisualPlan>>(new Map());
+  readonly overrides = signal<VisualOverrides>({});
+  readonly bookmarks = signal<Bookmark[]>([]);
+  readonly follow = signal<FollowState>('follow');
+  readonly panel = signal<Panel | null>(null);
+  readonly debug = signal(false);
+  readonly popover = signal<{ footnoteId: string; x: number; y: number } | null>(null);
+  readonly voices: VoiceInfo[];
+  readonly voiceChoice = signal<VoiceChoice>({ mode: 'silent' });
+  readonly saved: boolean;
+  readonly basicLanguage: boolean;
+  readonly sections = new Map<string, Section>();
+  private readonly cueCache = new Map<string, { plan: VisualPlan; times: number[] }>();
+  private readonly assetUrls = new Map<string, string>();
+
+  private constructor(
+    readonly bundle: BookBundle,
+    readonly env: AppEnv,
+    readonly library: LibraryService,
+    o: OpenOptions & { voices: VoiceInfo[]; start: Position; overrides: VisualOverrides; bookmarks: Bookmark[] },
+  ) {
+    this.book = bundle.book;
+    this.timeline = buildTimeline(this.book);
+    this.saved = o.saved;
+    this.basicLanguage = o.basicLanguage;
+    this.voices = o.voices;
+    for (const c of this.book.chapters) for (const s of c.sections) this.sections.set(s.id, s);
+    const preferred = settings.value.voiceByLang[primaryLanguage(this.book.language)];
+    const choice = env.speech ? selectVoice(o.voices, this.book.language, preferred) : ({ mode: 'silent' } as const);
+    this.voiceChoice.value = choice;
+    this.engine = new PlayerEngine({
+      book: this.book,
+      timeline: this.timeline,
+      port: choice.mode === 'voice' ? env.speech?.port : undefined,
+      voice: choice.mode === 'voice' ? choice.voice : undefined,
+      tempo: settings.value.tempo,
+      footnoteMode: settings.value.footnoteMode,
+      timers: env.timers,
+      start: o.start,
+    });
+    this.stage = new StageScheduler({ crossfadeMs: DURATIONS[settings.value.motion].slow });
+    this.overrides.value = o.overrides;
+    this.bookmarks.value = o.bookmarks;
+    this.replanAll();
+  }
+
+  static async open(env: AppEnv, library: LibraryService, bundle: BookBundle, o: OpenOptions): Promise<ReaderSession> {
+    const [voices, overrides, bookmarks] = await Promise.all([
+      env.speech ? env.speech.voices().catch(() => []) : Promise.resolve([]),
+      library.overrides(bundle.book.id),
+      library.bookmarks(bundle.book.id),
+    ]);
+    const timeline = buildTimeline(bundle.book);
+    const start = await library.loadPosition(bundle.book.id, timeline);
+    return new ReaderSession(bundle, env, library, { ...o, voices, start, overrides, bookmarks });
+  }
+
+  /** The director plans every section on open (B9), honouring the per-book forced modes. */
+  private replanAll(): void {
+    const plans = new Map<string, VisualPlan>();
+    for (const [id, section] of this.sections) plans.set(id, planSection(section, this.book, this.overrides.value[id] ?? 'auto'));
+    this.plans.value = plans;
+    this.cueCache.clear();
+  }
+
+  private readonly titles = new Map<string, string>();
+
+  /** The heading a section belongs to (stage context and title card), else the chapter title. */
+  sectionTitle(sectionId: string): string {
+    const cached = this.titles.get(sectionId);
+    if (cached !== undefined) return cached;
+    const entry = this.timeline.entries.find((e) => e.sectionId === sectionId);
+    const title = entry ? headingAt(this.book, this.timeline, entry.start) || this.book.title : this.book.title;
+    this.titles.set(sectionId, title);
+    return title;
+  }
+
+  sectionIdAt(entryIndex: number): string | undefined {
+    return this.timeline.entries[entryIndex]?.sectionId;
+  }
+
+  /** Plan and cue times of a section (cached until the plan changes). */
+  visualFor(sectionId: string): { plan: VisualPlan; times: number[] } | undefined {
+    const plan = this.plans.value.get(sectionId);
+    if (!plan) return undefined;
+    const cached = this.cueCache.get(sectionId);
+    if (cached && cached.plan === plan) return cached;
+    const entry = { plan, times: resolveCueTimes(plan, this.timeline) };
+    this.cueCache.set(sectionId, entry);
+    return entry;
+  }
+
+  followEvent(e: FollowEvent): void {
+    this.follow.value = autoFollow(this.follow.value, e);
+  }
+
+  /** User navigation: move the clock (restart speech if playing), switch the stage now (B8, B9). */
+  navigate(p: Position): void {
+    batch(() => {
+      this.engine.seek(p);
+      this.followEvent('navigate');
+    });
+    const section = this.sectionIdAt(this.engine.position.value.entryIndex);
+    if (section) this.stage.navigate(section, this.env.timers.now());
+  }
+
+  togglePlay(): void {
+    if (!this.engine.playing.value) this.followEvent('play');
+    this.engine.toggle();
+  }
+
+  forcedMode(sectionId: string): ForcedMode {
+    return this.overrides.value[sectionId] ?? 'auto';
+  }
+
+  /** V: auto → list → kinetic → text → auto for the current section, remembered per book (B9). */
+  cycleVisual(): ForcedMode | undefined {
+    const sectionId = this.sectionIdAt(this.engine.position.value.entryIndex);
+    const section = sectionId ? this.sections.get(sectionId) : undefined;
+    if (!sectionId || !section) return undefined;
+    const next = VISUAL_CYCLE[(VISUAL_CYCLE.indexOf(this.forcedMode(sectionId)) + 1) % VISUAL_CYCLE.length] ?? 'auto';
+    const overrides = { ...this.overrides.value };
+    if (next === 'auto') delete overrides[sectionId];
+    else overrides[sectionId] = next;
+    this.overrides.value = overrides;
+    const plans = new Map(this.plans.value);
+    plans.set(sectionId, planSection(section, this.book, next));
+    this.plans.value = plans;
+    void this.library.setOverrides(this.book.id, overrides);
+    this.stage.navigate(sectionId, this.env.timers.now());
+    return next;
+  }
+
+  bookmarkAt(entryIndex: number): Bookmark | undefined {
+    const id = this.timeline.entries[entryIndex]?.sentence.id;
+    return this.bookmarks.value.find((b) => b.sentenceId === id);
+  }
+
+  /** B: add or remove a bookmark at the current sentence. Returns true if one was added. */
+  toggleBookmark(): boolean {
+    const p = this.engine.position.value;
+    const entry = this.timeline.entries[p.entryIndex];
+    if (!entry) return false;
+    const existing = this.bookmarkAt(p.entryIndex);
+    const list = existing
+      ? this.bookmarks.value.filter((b) => b !== existing)
+      : [
+          ...this.bookmarks.value,
+          {
+            id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+            sentenceId: entry.sentence.id,
+            chapterId: entry.chapterId,
+            excerpt: entry.sentence.text.length > 140 ? `${entry.sentence.text.slice(0, 140).trimEnd()} …` : entry.sentence.text,
+            createdAt: new Date().toISOString(),
+          },
+        ];
+    list.sort((a, b) => (this.timeline.indexOf.get(a.sentenceId) ?? 0) - (this.timeline.indexOf.get(b.sentenceId) ?? 0));
+    this.bookmarks.value = list;
+    void this.library.setBookmarks(this.book.id, list);
+    return !existing;
+  }
+
+  removeBookmark(id: string): void {
+    this.bookmarks.value = this.bookmarks.value.filter((b) => b.id !== id);
+    void this.library.setBookmarks(this.book.id, this.bookmarks.value);
+  }
+
+  jumpToBookmark(b: Bookmark): void {
+    const index = this.timeline.indexOf.get(b.sentenceId);
+    if (index !== undefined) this.navigate({ entryIndex: index, tokenIndex: 0 });
+    else {
+      const k = this.timeline.entries.findIndex((e) => e.chapterId === b.chapterId);
+      this.navigate({ entryIndex: Math.max(0, k), tokenIndex: 0 });
+    }
+  }
+
+  setVoice(v: VoiceInfo): void {
+    const lang = primaryLanguage(this.book.language);
+    settings.value = { ...settings.value, voiceByLang: { ...settings.value.voiceByLang, [lang]: v.voiceURI } };
+    this.voiceChoice.value = selectVoice(this.voices, this.book.language, v.voiceURI);
+    this.engine.setVoice(v);
+  }
+
+  savePosition(): Promise<void> {
+    return this.library.savePosition(this.book.id, this.timeline, this.engine.position.value);
+  }
+
+  /** Object URL of an EPUB image asset (B3 figures). */
+  assetUrl(path: string): string | undefined {
+    const cached = this.assetUrls.get(path);
+    if (cached) return cached;
+    const asset = this.bundle.assets.find((a) => a.path === path);
+    if (!asset || typeof URL.createObjectURL !== 'function') return undefined;
+    const url = URL.createObjectURL(new Blob([asset.bytes as BlobPart], { type: asset.mediaType }));
+    this.assetUrls.set(path, url);
+    return url;
+  }
+
+  private disposed = false;
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    void this.savePosition();
+    this.engine.dispose();
+    for (const url of this.assetUrls.values()) URL.revokeObjectURL?.(url);
+    this.assetUrls.clear();
+  }
+}

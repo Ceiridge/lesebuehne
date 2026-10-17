@@ -1,0 +1,21 @@
+{
+  "name": "lesebuehne",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "build": "bun scripts/build.ts",
+    "preview": "bun scripts/preview.ts",
+    "typecheck": "tsc -p . --noEmit",
+    "fixtures": "bun scripts/fixtures.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.3",
+    "happy-dom": "20.14.5",
+    "typescript": "7.0.2"
+  }
+}

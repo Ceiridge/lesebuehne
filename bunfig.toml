@@ -1,0 +1,8 @@
+[install]
+# Hoisted node_modules: with the isolated linker, Bun 1.4.3 on Windows does not resolve
+# a package's own dependencies through the junction (happy-dom -> whatwg-mimetype).
+linker = "hoisted"
+
+[test]
+root = "."
+preload = ["./tests/support/no-network.ts"]
