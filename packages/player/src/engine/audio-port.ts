@@ -1,4 +1,4 @@
-import type { WordTiming } from '@lesebuehne/core';
+import { estimateWordTimings, type WordTiming } from '@lesebuehne/core';
 import type { SpeechPort, UtteranceRequest } from './speech-port.ts';
 
 /** Prefix of server TTS voice URIs: `tts:<providerId>:<voiceId>`. */
@@ -15,6 +15,8 @@ export interface TtsClip {
 /** Where clips come from (the TTS buffer with cache and prefetch). */
 export interface TtsSource {
   clip(text: string, lang: string, voice: string): Promise<TtsClip>;
+  /** An utterance that is not ready yet but can play while it is generated: its stream URL and expected length. */
+  live?(text: string, lang: string, voice: string): { url: string; seconds: number } | undefined;
 }
 
 /** The parts of `HTMLAudioElement` the port uses (a fake in tests). */
@@ -24,6 +26,9 @@ export interface AudioLike {
   preservesPitch: boolean;
   currentTime: number;
   volume?: number;
+  preload?: string;
+  /** Loaded time ranges (real media elements); without it a stream starts at once. */
+  buffered?: { readonly length: number; end(index: number): number };
   play(): Promise<void>;
   pause(): void;
   onplaying: (() => void) | null;
@@ -55,12 +60,15 @@ export class AudioSpeechPort implements SpeechPort {
   private audio: AudioLike | undefined;
   private stopPolling: (() => void) | undefined;
   private volume = 1;
+  /** The current audio reads a live stream (closed on stop so the connection does not linger). */
+  private streaming = false;
 
   constructor(
     private readonly o: {
       source: () => TtsSource | undefined;
       createAudio: () => AudioLike;
       ticker?: Ticker;
+      now?: () => number;
       onState?: (s: AudioState, error?: string) => void;
     },
   ) {}
@@ -77,56 +85,107 @@ export class AudioSpeechPort implements SpeechPort {
       return;
     }
     this.o.onState?.('buffering');
-    source.clip(r.text, r.lang, voice).then(
-      (clip) => {
-        if (!live()) return;
-        const audio = this.o.createAudio();
-        this.audio = audio;
-        audio.preservesPitch = true;
-        audio.src = clip.url;
-        audio.playbackRate = r.rate;
-        audio.volume = this.volume;
-        const offset = r.startOffset ?? 0;
-        // Timings use original text offsets. Never emit words before the requested position.
-        let next = offset ? clip.words.findIndex((w) => w.end > offset) : 0;
-        if (next < 0) next = clip.words.length;
-        if (offset) audio.currentTime = clip.words[next]?.t0 ?? clip.words.at(-1)?.t1 ?? 0;
-        let started = false;
-        const emit = (until: number): void => {
-          while (next < clip.words.length && clip.words[next]!.t0 <= until) r.onBoundary(clip.words[next++]!.start, 'word');
-        };
-        audio.onplaying = () => {
-          if (!live() || started) return;
-          started = true;
-          this.o.onState?.('playing');
-          r.onStart();
-          emit(audio.currentTime + 0.02);
-          this.stopPolling = (this.o.ticker ?? realTicker).every(40, () => live() && emit(audio.currentTime + 0.02));
-        };
-        audio.onended = () => {
-          if (!live()) return;
-          this.stopPolling?.();
-          emit(Infinity);
-          r.onEnd();
-        };
-        audio.onerror = () => {
-          if (!live()) return;
-          this.stopPolling?.();
-          this.o.onState?.('failed', 'audio playback error');
-          r.onError('audio');
-        };
-        audio.play().catch((e: unknown) => {
-          if (!live()) return;
-          this.o.onState?.('failed', e instanceof Error ? e.message : String(e));
-          r.onError('play');
-        });
-      },
-      (e: unknown) => {
+    const fail = (e: unknown): void => {
+      if (!live()) return;
+      this.o.onState?.('failed', e instanceof Error ? e.message : String(e));
+      r.onError('tts');
+    };
+    // Not generated yet and the voice streams: play while the server is still generating, with
+    // estimated word times until the aligned clip arrives. Resuming inside a chunk needs the clip.
+    const stream = r.startOffset ? undefined : source.live?.(r.text, r.lang, voice);
+    const clip = source.clip(r.text, r.lang, voice);
+    if (stream) {
+      clip.catch(() => undefined);
+      this.play(r, live, { url: stream.url, words: estimateWordTimings(r.text, r.lang, stream.seconds) }, { aligned: clip, seconds: stream.seconds });
+    } else clip.then((c) => live() && this.play(r, live, c), fail);
+  }
+
+  private play(r: UtteranceRequest, live: () => boolean, clip: TtsClip, stream?: { aligned: Promise<TtsClip>; seconds: number }): void {
+    const aligned = stream?.aligned;
+    const audio = this.o.createAudio();
+    this.audio = audio;
+    this.streaming = !!stream;
+    audio.preservesPitch = true;
+    audio.src = clip.url;
+    audio.playbackRate = r.rate;
+    audio.volume = this.volume;
+    let words = clip.words;
+    const offset = r.startOffset ?? 0;
+    // Timings use original text offsets. Never emit words before the requested position.
+    let next = offset ? words.findIndex((w) => w.end > offset) : 0;
+    if (next < 0) next = words.length;
+    if (offset) audio.currentTime = words[next]?.t0 ?? words.at(-1)?.t1 ?? 0;
+    // Estimated and aligned timings list the same words, so the emitted prefix stays valid.
+    aligned?.then((c) => {
+      if (live() && c.words.length) words = c.words;
+    }, () => undefined);
+    let started = false;
+    const emit = (until: number): void => {
+      while (next < words.length && words[next]!.t0 <= until) r.onBoundary(words[next++]!.start, 'word');
+    };
+    audio.onplaying = () => {
+      if (!live() || started) return;
+      started = true;
+      this.o.onState?.('playing');
+      r.onStart();
+      emit(audio.currentTime + 0.02);
+      this.stopPolling = (this.o.ticker ?? realTicker).every(40, () => live() && emit(audio.currentTime + 0.02));
+    };
+    audio.onended = () => {
+      if (!live()) return;
+      this.stopPolling?.();
+      emit(Infinity);
+      r.onEnd();
+    };
+    audio.onerror = () => {
+      if (!live()) return;
+      this.stopPolling?.();
+      this.o.onState?.('failed', 'audio playback error');
+      r.onError('audio');
+    };
+    const play = (): void => {
+      audio.play().catch((e: unknown) => {
         if (!live()) return;
         this.o.onState?.('failed', e instanceof Error ? e.message : String(e));
-        r.onError('tts');
-      },
-    );
+        r.onError('play');
+      });
+    };
+    if (!stream || !audio.buffered) return play();
+    // Streaming: start as soon as the rest will arrive before playback gets there. The rate comes
+    // from how fast the element's buffer grows; a paused element stops loading after a few
+    // seconds while the server keeps generating, so progress is extrapolated from that rate. On a
+    // fast GPU this starts in under a second; on a slow one it avoids stalling mid-sentence. The
+    // finished clip (aligned) always starts it.
+    audio.preload = 'auto';
+    const now = this.o.now ?? (() => performance.now());
+    const t0 = now();
+    let first: { t: number; loaded: number } | undefined;
+    let last: { t: number; loaded: number } | undefined;
+    let begun = false;
+    const begin = (): void => {
+      if (begun || !live()) return;
+      begun = true;
+      this.stopPolling?.();
+      this.stopPolling = undefined;
+      play();
+    };
+    aligned!.then(begin, begin);
+    this.stopPolling = (this.o.ticker ?? realTicker).every(100, () => {
+      const ranges = audio.buffered!;
+      const loaded = ranges.length ? ranges.end(ranges.length - 1) : 0;
+      const t = (now() - t0) / 1000;
+      if (loaded <= 0 || t <= 0) return;
+      if (!last || loaded > last.loaded) {
+        last = { t, loaded };
+        first ??= last;
+      }
+      // Growth between samples excludes the time to the first byte; until then, the overall average.
+      const speed = last.t - first!.t >= 0.6 ? (last.loaded - first!.loaded) / (last.t - first!.t) : loaded / t;
+      if (speed <= 0) return;
+      const total = Math.max(stream.seconds, loaded);
+      const generated = Math.min(total, last.loaded + speed * (t - last.t));
+      if ((total - generated) / speed + 0.3 <= (total - 0) / Math.max(0.25, r.rate)) begin();
+    });
   }
 
   private stop(): void {
@@ -137,7 +196,9 @@ export class AudioSpeechPort implements SpeechPort {
     if (a) {
       a.onplaying = a.onended = a.onerror = null;
       a.pause();
+      if (this.streaming) a.src = '';
     }
+    this.streaming = false;
   }
 
   cancel(): void {

@@ -212,7 +212,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
           coolingUntil: s?.coolingUntil ?? null,
           source: p instanceof CodexAuthLLM ? (p.lastSource ?? null) : null,
           login: p.id === 'codex-auth' || p.id === 'chatgpt-plan',
-          ...(p.kind === 'tts' ? { voices: p.voices, concurrency: p.limits?.concurrency ?? 2 } : {}),
+          ...(p.kind === 'tts' ? { voices: p.voices, concurrency: p.limits?.concurrency ?? 2, streaming: !!p.synthesizeStream } : {}),
         };
       }),
     );
@@ -326,6 +326,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     else if (req.method === 'POST' && path === '/api/llm/prepare') res = await run('stage', req, prepare);
     else if (req.method === 'POST' && path === '/api/llm/animate') res = await run('stage', req, animate);
     else if (req.method === 'POST' && path === '/api/tts') res = await run('speech', req, (r) => tts.handle(r));
+    else if (req.method === 'GET' && path === '/api/tts/stream') res = await run('speech', req, (r) => tts.handleStream(r));
     else if (req.method === 'POST' && path === '/api/images') res = await run('stage', req, (r) => images.handle(r, getBook));
     else if (req.method === 'GET' && path.startsWith('/api/images/')) res = await images.serve(decodeURIComponent(path.slice('/api/images/'.length)));
     else if (req.method === 'PUT' && m?.[1]) res = await putBook(req, decodeURIComponent(m[1]));

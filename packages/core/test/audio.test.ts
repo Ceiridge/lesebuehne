@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { alignWords, decodeWav, encodeWav, pcm16ToWav, speechActivity, syllables, type Pcm } from '../src/index.ts';
+import { alignWords, decodeWav, encodeWav, estimateWordTimings, pcm16ToWav, speechActivity, syllables, WavStreamEncoder, type Pcm } from '../src/index.ts';
 
 const RATE = 24000;
 
@@ -69,3 +69,28 @@ describe('M4: aligner', () => {
     expect(syllables('1789', 'de')).toBeGreaterThan(4);
   });
 });
+
+describe('live audio', () => {
+  test('WavStreamEncoder: float stereo of unknown length, samples split across chunks', () => {
+    const enc = new WavStreamEncoder(24000);
+    const h = new DataView(enc.header().buffer);
+    expect([h.getUint16(20, true), h.getUint16(22, true), h.getUint32(24, true), h.getUint16(34, true), h.getUint32(40, true)]).toEqual([3, 2, 24000, 32, 0xffffffff]);
+    const pcm = new Uint8Array(6);
+    const v = new DataView(pcm.buffer);
+    [16384, -32768, 1].forEach((x, i) => v.setInt16(i * 2, x, true));
+    const a = enc.encode(pcm.subarray(0, 3));
+    const b = enc.encode(pcm.subarray(3));
+    expect([a.byteLength, b.byteLength]).toEqual([8, 16]);
+    const f = (u: Uint8Array, i: number) => new DataView(u.buffer).getFloat32(i * 4, true);
+    expect([f(a, 0), f(a, 1), f(b, 0), f(b, 2)]).toEqual([0.5, 0.5, -1, 1 / 32768]);
+  });
+
+  test('estimateWordTimings: monotone, pauses at punctuation, fills the expected length', () => {
+    const w = estimateWordTimings('Habe Mut, dich zu bedienen.', 'de', 3);
+    expect(w.map((x) => x.start)).toEqual([0, 5, 10, 15, 18]);
+    for (let i = 1; i < w.length; i++) expect(w[i]!.t0).toBeGreaterThanOrEqual(w[i - 1]!.t1);
+    expect(w[2]!.t0 - w[1]!.t1).toBeCloseTo(0.22, 2);
+    expect(w.at(-1)!.t1).toBeCloseTo(3, 1);
+  });
+});
+

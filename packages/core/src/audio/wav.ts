@@ -92,3 +92,60 @@ export function pcm16ToWav(raw: Uint8Array, sampleRate: number): Uint8Array {
 }
 
 export const durationOf = (pcm: Pcm): number => pcm.samples.length / pcm.sampleRate;
+
+/**
+ * Re-encodes a live s16le mono PCM stream as a WAV of unknown length for an `<audio>` element.
+ * RIFF and data sizes are 0xFFFFFFFF ("until the end of the stream"). Chromium starts playing only
+ * after a fixed number of bytes (about 200 KB, measured), so the samples go out losslessly as
+ * 32-bit float stereo, four times the bytes: playback starts after under a second of audio
+ * instead of about four.
+ */
+export class WavStreamEncoder {
+  private carry: number | undefined;
+
+  constructor(readonly sampleRate: number) {}
+
+  header(): Uint8Array {
+    const out = new Uint8Array(44);
+    const v = new DataView(out.buffer);
+    const put = (at: number, s: string): void => {
+      for (let i = 0; i < s.length; i++) v.setUint8(at + i, s.charCodeAt(i));
+    };
+    put(0, 'RIFF');
+    v.setUint32(4, 0xffffffff, true);
+    put(8, 'WAVE');
+    put(12, 'fmt ');
+    v.setUint32(16, 16, true);
+    v.setUint16(20, 3, true);
+    v.setUint16(22, 2, true);
+    v.setUint32(24, this.sampleRate, true);
+    v.setUint32(28, this.sampleRate * 8, true);
+    v.setUint16(32, 8, true);
+    v.setUint16(34, 32, true);
+    put(36, 'data');
+    v.setUint32(40, 0xffffffff, true);
+    return out;
+  }
+
+  /** Frames for the next chunk; a sample split across chunks is completed with the next one. */
+  encode(chunk: Uint8Array): Uint8Array {
+    let bytes = chunk;
+    if (this.carry !== undefined) {
+      bytes = new Uint8Array(chunk.byteLength + 1);
+      bytes[0] = this.carry;
+      bytes.set(chunk, 1);
+      this.carry = undefined;
+    }
+    const n = Math.floor(bytes.byteLength / 2);
+    if (bytes.byteLength % 2) this.carry = bytes[bytes.byteLength - 1];
+    const src = new DataView(bytes.buffer, bytes.byteOffset, n * 2);
+    const out = new Uint8Array(n * 8);
+    const dst = new DataView(out.buffer);
+    for (let i = 0; i < n; i++) {
+      const x = src.getInt16(i * 2, true) / 32768;
+      dst.setFloat32(i * 8, x, true);
+      dst.setFloat32(i * 8 + 4, x, true);
+    }
+    return out;
+  }
+}

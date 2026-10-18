@@ -152,4 +152,27 @@ export function alignWords(pcm: Pcm, text: string, lang: string): WordTiming[] {
   return timings;
 }
 
+const PAUSE_SECONDS = [0, 0.22, 0.32, 0.45];
+
+/**
+ * Provisional word timings before the audio is known (a clip that is still streaming): syllable
+ * weight plus typical pauses at punctuation, stretched to `seconds`. Replaced by `alignWords` once
+ * the whole clip has been aligned.
+ */
+export function estimateWordTimings(text: string, lang: string, seconds: number, lead = 0.12): WordTiming[] {
+  const ws = words(text, lang);
+  if (ws.length === 0) return [];
+  const pauses = ws.slice(0, -1).reduce((a, w) => a + PAUSE_SECONDS[w.pause]!, 0);
+  const weight = ws.reduce((a, w) => a + w.weight, 0);
+  const speech = Math.max(0.2 * ws.length, seconds - lead - pauses);
+  const timings: WordTiming[] = [];
+  let t = lead;
+  for (const [i, w] of ws.entries()) {
+    const d = (speech * w.weight) / weight;
+    timings.push({ start: w.start, end: w.end, t0: round(t), t1: round(t + d) });
+    t += d + (i < ws.length - 1 ? PAUSE_SECONDS[w.pause]! : 0);
+  }
+  return timings;
+}
+
 const round = (n: number): number => Math.round(n * 1000) / 1000;

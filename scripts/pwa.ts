@@ -109,7 +109,7 @@ export function manifest(): string {
     {
       name: 'Lesebühne',
       short_name: 'Lesebühne',
-      description: 'Sachbücher wortgetreu vorlesen – mit Text, Hervorhebung und ruhigen Visualisierungen.',
+      description: 'Bücher wortgetreu vorlesen – mit Text, Hervorhebung und ruhigen Bildern.',
       start_url: './',
       scope: './',
       display: 'standalone',

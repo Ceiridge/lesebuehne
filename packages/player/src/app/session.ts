@@ -20,8 +20,8 @@ import { batch, computed, effect, signal } from '@preact/signals';
 import { AiPlanner, type PlanInfo } from '../ai/planner.ts';
 import { ImageSequencePlanner } from '../ai/image-sequence.ts';
 import type { AiBackend } from '../ai/backends.ts';
-import { aiBackend, aiDetails, refreshDetails, ttsBuffer, ttsVoices } from '../ai/state.ts';
-import { TtsBuffer } from '../ai/tts.ts';
+import { aiBackend, aiDetails, createTtsBuffer, refreshDetails, ttsBuffer, ttsVoices } from '../ai/state.ts';
+import type { TtsBuffer } from '../ai/tts.ts';
 import { mergeRanges, type GenerationRange, type GenerationState } from '../ai/progress.ts';
 import { isTtsVoice, TTS_VOICE_PREFIX } from '../engine/audio-port.ts';
 import { footnoteLookup, sectionEndItems, sentenceItems } from '../engine/queue.ts';
@@ -529,7 +529,7 @@ export class ReaderSession {
       finally {
         this.lastPrefetch = -1;
         if (aiBackend.peek() === backend && backend.tts) {
-          const buffer = new TtsBuffer((text, lang, voice, signal) => backend.tts!(text, lang, voice, signal));
+          const buffer = createTtsBuffer(backend)!;
           buffer.setConcurrency(Math.max(1, ...(aiDetails.peek()?.providers ?? []).filter((p) => p.kind === 'tts').map((p) => p.concurrency ?? 4)));
           ttsBuffer.value = buffer;
         }

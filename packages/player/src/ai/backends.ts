@@ -39,6 +39,8 @@ export interface ProviderStatus {
   /** TTS providers: their voices. */
   voices?: TTSVoice[];
   concurrency?: number;
+  /** TTS providers on the server: audio can play while it is generated (`ttsStreamUrl`). */
+  streaming?: boolean;
   usage?: ProviderStats | undefined;
 }
 
@@ -72,6 +74,8 @@ export interface AiBackend {
   image?(book: Book, sectionId: string, plan: VisualPlan, opts: ImageOptions, signal: AbortSignal): Promise<ImageResult>;
   /** Server TTS (spec 004): WAV audio and aligned word timings for one utterance. */
   tts?(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }>;
+  /** Server TTS: a URL an `<audio>` element plays while the utterance is still being generated. */
+  ttsStreamUrl?(text: string, lang: string, voice: string): string;
   /** Starts an own sign-in on the server; returns the URL to open. */
   login?(providerId: string): Promise<string>;
   cacheStats?(): Promise<CacheStats>;
@@ -179,6 +183,10 @@ export class ServerBackend implements AiBackend {
     const words = JSON.parse(decodeURIComponent(res.headers.get('x-lb-words') ?? '%5B%5D')) as WordTiming[];
     const cached = res.headers.get('x-lb-cached');
     return { audio: await res.blob(), words, ...(cached === 'true' || cached === 'false' ? { cached: cached === 'true' } : {}) };
+  }
+
+  ttsStreamUrl(text: string, lang: string, voice: string): string {
+    return `${this.url('api/tts/stream')}?${new URLSearchParams({ text, lang, voice })}`;
   }
 
   async login(providerId: string): Promise<string> {

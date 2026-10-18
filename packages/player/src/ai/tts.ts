@@ -7,6 +7,9 @@ import { GenerationThroughput } from './throughput.ts';
 /** Synthesizes one utterance (the server's `/api/tts`). */
 export type Synthesize = (text: string, lang: string, voice: string, signal: AbortSignal) => Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }>;
 
+/** A URL that plays an utterance while it is generated (the server's `/api/tts/stream`), if the voice streams. */
+export type StreamUrl = (text: string, lang: string, voice: string) => string | undefined;
+
 /** Readiness of server TTS (spec 004 B4): shown next to the controls. */
 export interface TtsStatus {
   state: AudioState;
@@ -63,6 +66,7 @@ export class TtsBuffer implements TtsSource {
     private readonly maxEntries = 300,
     private readonly urls: { create(b: Blob): string; revoke(u: string): void } = { create: (b) => URL.createObjectURL(b), revoke: (u) => URL.revokeObjectURL(u) },
     private readonly now: () => number = () => performance.now(),
+    private readonly stream?: StreamUrl,
   ) {}
 
   private load(key: string, text: string, lang: string, voice: string, priority: number): Promise<TtsClip> {
@@ -144,6 +148,19 @@ export class TtsBuffer implements TtsSource {
   clip(text: string, lang: string, voice: string): Promise<TtsClip> {
     if (this.disposed) return Promise.reject(new DOMException('disposed', 'AbortError'));
     return this.load(keyOf(text, lang, voice), text, lang, voice, -1);
+  }
+
+  /**
+   * For an utterance that is not ready yet: a stream URL to start playing at once, and the expected
+   * audio length for provisional word timings (from this voice's recent clips).
+   */
+  live(text: string, lang: string, voice: string): { url: string; seconds: number } | undefined {
+    if (this.disposed || !this.stream || this.ready.has(keyOf(text, lang, voice))) return undefined;
+    const url = this.stream(text, lang, voice);
+    if (!url) return undefined;
+    const cadence = this.cadence.get(voice) ?? [];
+    const speed = cadence.length ? cadence.reduce((n, s) => n + s.content, 0) / cadence.reduce((n, s) => n + s.audio, 0) : 1;
+    return { url, seconds: estimateSeconds(text, lang) / (speed > 0 ? speed : 1) };
   }
 
   setConcurrency(value: number): void {

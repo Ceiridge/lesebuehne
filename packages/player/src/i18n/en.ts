@@ -62,7 +62,7 @@ export const en: Record<keyof typeof de, string> = {
   'ai.saveHint': 'Provider changes take effect when you save.',
   'app.title': 'Lesebühne',
   'app.updated': 'Lesebühne was updated – reload for the new version.',
-  'app.tagline': 'Non-fiction read aloud word for word – with text, highlighting and calm visuals.',
+  'app.tagline': 'Books read aloud word for word – with text, highlighting and calm visuals.',
 
   'start.samples': 'Try it',
   'start.sampleBadge': 'Sample',

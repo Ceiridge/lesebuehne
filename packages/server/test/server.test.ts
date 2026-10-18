@@ -269,6 +269,73 @@ describe('M4: /api/tts', () => {
   });
 });
 
+describe('TTS streaming', () => {
+  test('GET /api/tts/stream plays while generating; POST joins the same synthesis; then cached', async () => {
+    const { decodeWav } = await import('@lesebuehne/core');
+    let calls = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const frame = (v: number) => {
+      const b = new Uint8Array(4800);
+      const d = new DataView(b.buffer);
+      for (let i = 0; i < 2400; i++) d.setInt16(i * 2, Math.round(v * 12000 * Math.sin(i / 20)), true);
+      return b;
+    };
+    const fakeTts = {
+      kind: 'tts' as const,
+      id: 'qwentts',
+      label: 'fake',
+      runsIn: ['server'] as const,
+      capabilities: {},
+      voices: [{ id: 'vivian', name: 'Vivian', languages: [] }],
+      isAvailable: async () => ({ ok: true }),
+      synthesize: async () => Promise.reject(new Error('the streaming path must be used')),
+      synthesizeStream: async () => {
+        calls++;
+        async function* chunks() {
+          yield frame(0);
+          yield frame(1);
+          await gate;
+          for (let i = 0; i < 6; i++) yield frame(1);
+          yield frame(0);
+        }
+        return { sampleRate: 24000, chunks: chunks() };
+      },
+    };
+    const { api, ctx } = setup([]);
+    ctx.providers.registry.register(fakeTts);
+    const text = 'Sapere aude, sagt Kant.';
+    const q = `?${new URLSearchParams({ text, lang: 'de', voice: 'qwentts:vivian' })}`;
+    const stream = await call(api, 'GET', `/api/tts/stream${q}`);
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get('x-lb-streaming')).toBe('true');
+    const reader = stream.body!.getReader();
+    const header = (await reader.read()).value!;
+    expect(new TextDecoder().decode(header.slice(0, 4))).toBe('RIFF');
+    expect(new DataView(header.buffer, header.byteOffset).getUint32(40, true)).toBe(0xffffffff);
+    // Audio arrives before the synthesis is finished (as float stereo: four times the bytes).
+    expect((await reader.read()).value!.byteLength).toBe(4 * 4800);
+    const joined = call(api, 'POST', '/api/tts', { text, lang: 'de', voice: 'qwentts:vivian' });
+    release();
+    let streamed = 4 * 4800;
+    for (;;) {
+      const r = await reader.read();
+      if (r.done) break;
+      streamed += r.value.byteLength;
+    }
+    expect(streamed).toBe(4 * 9 * 4800);
+    const r = await joined;
+    expect(r.headers.get('x-lb-cached')).toBe('false');
+    expect(decodeWav(new Uint8Array(await r.arrayBuffer())).samples.length).toBe(9 * 2400);
+    expect(calls).toBe(1);
+    const again = await call(api, 'GET', `/api/tts/stream${q}`);
+    expect(again.headers.get('x-lb-streaming')).toBeNull();
+    expect(calls).toBe(1);
+    const caps = (await (await call(api, 'GET', '/api/capabilities')).json()) as { providers: Array<{ id: string; streaming?: boolean }> };
+    expect(caps.providers.find((p) => p.id === 'qwentts')?.streaming).toBe(true);
+  });
+});
+
 describe('M5: images', () => {
   test('generate, cache, variants, style reference from the first image, safe file serving', async () => {
     const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, ...new Array(300).fill(7)]);

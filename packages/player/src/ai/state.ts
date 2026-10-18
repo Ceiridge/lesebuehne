@@ -27,9 +27,28 @@ export function setBackend(b: AiBackend | undefined): void {
   ttsBuffer.value?.dispose();
   ttsStatus.value = { state: 'idle', ahead: 0, limited: false };
   aiBackend.value = b;
-  ttsBuffer.value = b?.tts ? new TtsBuffer((text, lang, voice, s) => b.tts!(text, lang, voice, s)) : undefined;
+  ttsBuffer.value = b ? createTtsBuffer(b) : undefined;
   aiStatus.value = { mode: b?.mode ?? 'heuristic', working: 0, limited: false };
   aiDetails.value = undefined;
+}
+
+/**
+ * The clip buffer for a backend that can speak. Voices of streaming server providers start
+ * playing while their audio is generated.
+ */
+export function createTtsBuffer(b: AiBackend): TtsBuffer | undefined {
+  if (!b.tts) return undefined;
+  const streams = (voice: string): boolean => {
+    const providerId = voice.slice(0, voice.indexOf(':'));
+    return !!aiDetails.peek()?.providers.some((p) => p.id === providerId && p.kind === 'tts' && p.streaming);
+  };
+  return new TtsBuffer(
+    (text, lang, voice, s) => b.tts!(text, lang, voice, s),
+    undefined,
+    undefined,
+    undefined,
+    b.ttsStreamUrl ? (text, lang, voice) => (streams(voice) ? b.ttsStreamUrl!(text, lang, voice) : undefined) : undefined,
+  );
 }
 
 /** Server TTS voices for a book language (multilingual voices count for every language). */

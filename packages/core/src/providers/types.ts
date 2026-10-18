@@ -102,6 +102,14 @@ export interface TTSProvider extends ProviderMeta {
     mime: string;
     words?: WordTiming[];
   }>;
+  /**
+   * Optional streaming synthesis: raw s16le mono PCM chunks while they are generated, so playback
+   * can start after the first frames instead of after the whole utterance.
+   */
+  synthesizeStream?(req: { text: string; lang: string; voice?: string; signal: AbortSignal }): Promise<{
+    sampleRate: number;
+    chunks: AsyncIterable<Uint8Array>;
+  }>;
 }
 
 export type ImageQuality = 'low' | 'medium' | 'high';

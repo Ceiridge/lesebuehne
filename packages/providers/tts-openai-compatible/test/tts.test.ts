@@ -50,4 +50,23 @@ describe('M4: tts-openai-compatible', () => {
     expect(f.calls[0]!.headers.authorization).toBe('Bearer k');
     expect(f.calls[0]!.body.language).toBeUndefined();
   });
+
+  test('qwentts streams raw PCM chunks as they arrive', async () => {
+    const parts = [new Uint8Array(480).fill(1), new Uint8Array(960).fill(2)];
+    const f = fakeFetch(() => new Response(new ReadableStream({
+      start(c) {
+        for (const p of parts) c.enqueue(p);
+        c.close();
+      },
+    })));
+    const tts = qwentts({ voices: ['vivian'], fetch: f.fetch });
+    expect(tts.capabilities.streaming).toBe(true);
+    const st = await tts.synthesizeStream!({ text: 'Habe Mut.', lang: 'de', voice: 'vivian', signal });
+    const got: number[] = [];
+    for await (const c of st.chunks) got.push(c.byteLength);
+    expect(got).toEqual([480, 960]);
+    expect(st.sampleRate).toBe(24000);
+    expect(f.calls[0]!.body.response_format).toBe('pcm');
+    expect(new OpenAICompatibleTTS({ id: 'x', baseURL: 'http://x/v1', voices: [] }).synthesizeStream).toBeUndefined();
+  });
 });

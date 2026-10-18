@@ -28,6 +28,11 @@ export interface OpenAICompatibleTTSConfig {
   /** `wav` (default) or raw 16-bit PCM at `pcmSampleRate`. */
   format?: 'wav' | 'pcm';
   pcmSampleRate?: number;
+  /**
+   * Stream raw PCM while it is generated (`response_format: "pcm"`, s16le mono at
+   * `pcmSampleRate`). qwentts.cpp and OpenAI support it; playback then starts after the first frames.
+   */
+  stream?: boolean;
   /** Extra body fields (`seed`, `temperature` …). */
   body?: Record<string, unknown>;
   requiresKey?: boolean;
@@ -67,7 +72,8 @@ export class OpenAICompatibleTTS implements TTSProvider {
     this.label = config.label ?? config.id;
     this.runsIn = config.runsIn ?? ['server'];
     this.voices = config.voices;
-    this.capabilities = { wordTimings: false, format: config.format ?? 'wav' };
+    this.capabilities = { wordTimings: false, format: config.format ?? 'wav', streaming: !!config.stream };
+    if (!config.stream) this.synthesizeStream = undefined;
     this.limits = { concurrency: config.concurrency ?? 2 };
     this.costHint = config.costHint ?? (config.requiresKey ? 'metered' : 'free');
     this.fetchImpl = config.fetch ?? ((u, i) => fetch(u, i));
@@ -90,26 +96,34 @@ export class OpenAICompatibleTTS implements TTSProvider {
     }
   }
 
-  async synthesize(req: { text: string; lang: string; voice?: string; signal: AbortSignal }): Promise<{ audio: Uint8Array; mime: string }> {
+  private body(req: { text: string; lang: string; voice?: string }, format: 'wav' | 'pcm'): string {
     const voice = req.voice ?? this.voices[0]?.id;
     if (!voice) throw new ProviderError(this.id, 'bad-request', 'no voice');
     const lang = req.lang.toLowerCase().split(/[-_]/u)[0] ?? req.lang;
     const language = this.config.language === 'code' ? lang : this.config.language === 'name' ? (LANGUAGE_NAMES[lang] ?? lang) : undefined;
-    const format = this.config.format ?? 'wav';
-    const res = await request(this.id, this.fetchImpl, this.url('/audio/speech'), {
+    return JSON.stringify({
+      ...(this.config.model ? { model: this.config.model } : {}),
+      input: req.text,
+      voice,
+      response_format: format,
+      ...(language ? { language } : {}),
+      ...this.config.body,
+    });
+  }
+
+  private post(body: string, signal: AbortSignal): Promise<Response> {
+    return request(this.id, this.fetchImpl, this.url('/audio/speech'), {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}) },
-      body: JSON.stringify({
-        ...(this.config.model ? { model: this.config.model } : {}),
-        input: req.text,
-        voice,
-        response_format: format,
-        ...(language ? { language } : {}),
-        ...this.config.body,
-      }),
+      body,
       timeoutMs: this.config.timeoutMs ?? 120_000,
-      signal: req.signal,
+      signal,
     });
+  }
+
+  async synthesize(req: { text: string; lang: string; voice?: string; signal: AbortSignal }): Promise<{ audio: Uint8Array; mime: string }> {
+    const format = this.config.format ?? 'wav';
+    const res = await this.post(this.body(req, format), req.signal);
     const bytes = new Uint8Array(await res.arrayBuffer());
     if (bytes.byteLength < 64) throw new ProviderError(this.id, 'invalid-output', 'empty audio');
     if (format === 'pcm') return { audio: pcm16ToWav(bytes, this.config.pcmSampleRate ?? 24000), mime: 'audio/wav' };
@@ -117,13 +131,57 @@ export class OpenAICompatibleTTS implements TTSProvider {
     if (riff !== 'RIFF') throw new ProviderError(this.id, 'invalid-output', 'answer is not WAV audio');
     return { audio: bytes, mime: 'audio/wav' };
   }
+
+  /** Raw PCM chunks as the server sends them (only with `stream: true`). */
+  synthesizeStream?: (req: { text: string; lang: string; voice?: string; signal: AbortSignal }) => Promise<{ sampleRate: number; chunks: AsyncIterable<Uint8Array> }> = async (req) => {
+    const res = await this.post(this.body(req, 'pcm'), req.signal);
+    const body = res.body;
+    if (!body) throw new ProviderError(this.id, 'invalid-output', 'empty audio');
+    const id = this.id;
+    const idleMs = Math.min(60_000, this.config.timeoutMs ?? 60_000);
+    async function* chunks(): AsyncGenerator<Uint8Array> {
+      const reader = body!.getReader();
+      let total = 0;
+      let stalled = false;
+      // `request` stops watching the signal once the headers are in; the body needs its own.
+      const onAbort = (): void => void reader.cancel().catch(() => undefined);
+      req.signal.addEventListener('abort', onAbort, { once: true });
+      try {
+        for (;;) {
+          // A server that stops sending mid-utterance must not hold playback forever.
+          const timer = setTimeout(() => {
+            stalled = true;
+            void reader.cancel().catch(() => undefined);
+          }, idleMs);
+          const { done, value } = await reader.read().finally(() => clearTimeout(timer));
+          if (stalled) throw new ProviderError(id, 'timeout', `no audio for ${idleMs} ms`);
+          if (req.signal.aborted) throw new ProviderError(id, 'aborted', 'aborted');
+          if (done) break;
+          if (value?.byteLength) {
+            total += value.byteLength;
+            yield value;
+          }
+        }
+      } catch (e) {
+        if (e instanceof ProviderError) throw e;
+        if (req.signal.aborted) throw new ProviderError(id, 'aborted', 'aborted', { cause: e });
+        throw new ProviderError(id, 'network', `audio stream broke off: ${(e as Error).message}`, { cause: e });
+      } finally {
+        req.signal.removeEventListener('abort', onAbort);
+        reader.releaseLock();
+      }
+      if (total < 64) throw new ProviderError(id, 'invalid-output', 'empty audio');
+    }
+    return { sampleRate: this.config.pcmSampleRate ?? 24000, chunks: chunks() };
+  };
 }
 
 /**
- * A local qwentts.cpp `tts-server` (Qwen3-TTS): language by name, fixed seed. One request at a time
- * by default; a server started with `--max-batch n` computes n requests together (`concurrency: n`).
+ * A local qwentts.cpp `tts-server` (Qwen3-TTS): language by name, fixed seed, streamed PCM. One
+ * request at a time by default; a server started with `--max-batch n` computes n requests together
+ * (`concurrency: n`).
  */
-export function qwentts(o: { id?: string; baseURL?: string; voices: Array<string | TTSVoice>; seed?: number; concurrency?: number; fetch?: FetchLike }): OpenAICompatibleTTS {
+export function qwentts(o: { id?: string; baseURL?: string; voices: Array<string | TTSVoice>; seed?: number; concurrency?: number; stream?: boolean; fetch?: FetchLike }): OpenAICompatibleTTS {
   return new OpenAICompatibleTTS({
     id: o.id ?? 'qwentts',
     label: 'Qwen3-TTS (qwentts.cpp, local)',
@@ -131,6 +189,8 @@ export function qwentts(o: { id?: string; baseURL?: string; voices: Array<string
     voices: o.voices.map((v) => (typeof v === 'string' ? { id: v, name: v, languages: [] } : v)),
     language: 'name',
     format: 'wav',
+    stream: o.stream ?? true,
+    pcmSampleRate: 24000,
     body: { seed: o.seed ?? 42 },
     concurrency: o.concurrency ?? 1,
     timeoutMs: 300_000,
@@ -149,6 +209,8 @@ export function openaiTTS(o: { id?: string; apiKey?: string; model?: string; voi
     model: o.model ?? 'gpt-4o-mini-tts',
     voices: (o.voices ?? ['alloy', 'nova', 'onyx']).map((v) => ({ id: v, name: v, languages: [] })),
     requiresKey: true,
+    stream: true,
+    pcmSampleRate: 24000,
     ...(o.fetch ? { fetch: o.fetch } : {}),
   });
 }

@@ -60,7 +60,7 @@ export const de = {
   'ai.saveHint': 'Anbieteränderungen werden erst beim Speichern angewendet.',
   'app.title': 'Lesebühne',
   'app.updated': 'Lesebühne wurde aktualisiert – neu laden für die neue Version.',
-  'app.tagline': 'Sachbücher wortgetreu vorlesen lassen – mit Text, Hervorhebung und ruhigen Visualisierungen.',
+  'app.tagline': 'Bücher wortgetreu vorlesen lassen – mit Text, Hervorhebung und ruhigen Bildern.',
 
   'start.samples': 'Zum Ausprobieren',
   'start.sampleBadge': 'Beispiel',

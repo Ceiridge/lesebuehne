@@ -103,6 +103,63 @@ describe('M4: audio speech port', () => {
     expect(events).toEqual(['start']);
   });
 
+  test('streaming: plays the live URL at once with estimated words, then switches to the aligned timings', async () => {
+    const audio = new FakeAudio();
+    const ticker = new FakeTicker();
+    let deliver!: (c: { url: string; words: typeof words }) => void;
+    const src: TtsSource = {
+      clip: () => new Promise((r) => (deliver = r)),
+      live: () => ({ url: 'http://127.0.0.1/api/tts/stream?x', seconds: 2 }),
+    };
+    const port = new AudioSpeechPort({ source: () => src, createAudio: () => audio, ticker });
+    const { r, events } = request();
+    port.speak(r);
+    await flush();
+    expect(audio.src).toBe('http://127.0.0.1/api/tts/stream?x');
+    expect(events).toEqual(['start']);
+    audio.currentTime = 0.2;
+    ticker.tick();
+    expect(events).toEqual(['start', 'word@0']);
+    deliver({ url: 'blob:x', words });
+    await flush();
+    audio.currentTime = 0.45;
+    ticker.tick();
+    expect(events).toEqual(['start', 'word@0', 'word@5']);
+    port.cancel();
+    expect(audio.src).toBe('');
+  });
+
+  test('streaming waits until generation will outrun playback, judged from buffer growth', async () => {
+    let loaded = 0;
+    let now = 0;
+    const audio = Object.assign(new FakeAudio(), { buffered: { get length() { return loaded ? 1 : 0; }, end: () => loaded } });
+    const ticker = new FakeTicker();
+    const src: TtsSource = { clip: () => new Promise(() => undefined), live: () => ({ url: 'stream', seconds: 10 }) };
+    const port = new AudioSpeechPort({ source: () => src, createAudio: () => audio, ticker, now: () => now });
+    port.speak(request({ rate: 1 }).r);
+    await flush();
+    // Half real time: 1 s of audio per 2 s; the element stops loading at 2 s (paused preload).
+    for (const [t, l] of [[2000, 1], [3000, 1.5], [4000, 2], [5000, 2], [8000, 2]] as const) {
+      now = t;
+      loaded = l;
+      ticker.tick();
+      expect(audio.paused).toBe(true);
+    }
+    // Extrapolated: 5.5 s generated at t = 11 s; the remaining 4.5 s take 9 s < 10 s of playback.
+    now = 11000;
+    ticker.tick();
+    expect(audio.paused).toBe(false);
+  });
+
+  test('streaming is skipped when resuming inside a chunk', async () => {
+    const audio = new FakeAudio();
+    const src = { ...source(), live: () => ({ url: 'stream', seconds: 2 }) };
+    const port = new AudioSpeechPort({ source: () => src, createAudio: () => audio, ticker: new FakeTicker() });
+    port.speak(request({ startOffset: 5 }).r);
+    await flush();
+    expect(audio.src).toBe('blob:x');
+  });
+
   test('routing: TTS voices to audio, others to Web Speech; failed TTS falls back to a browser voice', async () => {
     const webCalls: UtteranceRequest[] = [];
     const web: SpeechPort = { speak: (r) => void webCalls.push(r), cancel: () => undefined };
