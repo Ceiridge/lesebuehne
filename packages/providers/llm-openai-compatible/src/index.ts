@@ -15,6 +15,7 @@ import {
   type LLMProvider,
   type LLMRequest,
   type LLMResult,
+  type ModelOption,
   type RunsIn,
   type Usage,
 } from '@lesebuehne/core';
@@ -115,6 +116,20 @@ export class OpenAICompatibleLLM implements LLMProvider {
       ...(json.usage?.cost !== undefined ? { cost: json.usage.cost } : {}),
     };
     return { text: message?.content ?? '', model: json.model ?? model, usage };
+  }
+
+  /** `GET {baseURL}/models` (OpenAI, OpenRouter, Ollama, LM Studio …), sorted by name. */
+  async listModels(signal: AbortSignal): Promise<ModelOption[]> {
+    const res = await request(this.id, this.fetchImpl, this.url('/models'), {
+      signal,
+      timeoutMs: 20_000,
+      headers: { ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}), ...this.config.headers },
+    });
+    const json = (await res.json()) as { data?: Array<{ id?: string; name?: string; description?: string }> };
+    return (json.data ?? [])
+      .filter((m): m is { id: string; name?: string; description?: string } => typeof m.id === 'string')
+      .map((m) => ({ id: m.id, name: m.name || m.id, ...(m.description ? { description: m.description.slice(0, 200) } : {}) }))
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async completeJSON<T>(req: LLMRequest<T>): Promise<LLMResult<T>> {

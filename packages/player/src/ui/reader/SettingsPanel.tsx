@@ -13,8 +13,9 @@ import { Drawer } from './Panels.tsx';
 import { VolumeSlider } from './VolumeControl.tsx';
 import { StorageSettings } from './StorageSettings.tsx';
 import { StageSettings } from './StageSettings.tsx';
+import { InfoSettings } from './InfoSettings.tsx';
 
-const TASKS = ['reading', 'appearance', 'stage', 'ai', 'storage'] as const;
+const TASKS = ['reading', 'appearance', 'stage', 'ai', 'storage', 'info'] as const;
 
 function update(patch: Partial<Settings>): void {
   settings.value = { ...settings.value, ...patch };
@@ -232,6 +233,9 @@ export function SettingsPanel({ session }: { session: ReaderSession }) {
 
       <section id="settings-panel-storage" role="tabpanel" aria-labelledby="settings-tab-storage" hidden={tab !== 'storage'}>
       {tab === 'storage' ? <StorageSettings session={session} /> : null}
+      </section>
+      <section id="settings-panel-info" role="tabpanel" aria-labelledby="settings-tab-info" hidden={tab !== 'info'}>
+      {tab === 'info' ? <InfoSettings session={session} /> : null}
       <details class="settings-fold"><summary>{t('settings.general')}</summary><div class="fold-body">
       <h3 class="settings-group">{t('settings.language')}</h3>
       <Segmented field="uiLanguage" label="settings.language" options={['auto', 'de', 'en']} />

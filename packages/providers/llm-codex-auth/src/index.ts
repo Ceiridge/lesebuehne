@@ -8,6 +8,7 @@
  */
 import {
   completeWithRepair,
+  effortFor,
   jsonSchemaOf,
   ProviderError,
   readSse,
@@ -17,6 +18,7 @@ import {
   type LLMProvider,
   type LLMRequest,
   type LLMResult,
+  type ModelOption,
   type Usage,
 } from '@lesebuehne/core';
 import { codexCliSource, openCodeSource, ownSource, type CodexToken, type TokenSource } from './sources.ts';
@@ -50,9 +52,32 @@ export interface CodexAuthConfig {
   now?: () => number;
 }
 
+/** The parts of a Codex catalog entry the player uses (`GET /models`). */
 interface ModelInfo {
   slug: string;
   visibility?: string;
+  display_name?: string;
+  description?: string | null;
+  default_reasoning_level?: string | null;
+  supported_reasoning_levels?: Array<{ effort: string; description?: string }>;
+  service_tiers?: Array<{ id: string; name: string; description?: string }>;
+  /** Deprecated catalog field: `fast` means the `priority` tier. */
+  additional_speed_tiers?: string[];
+  default_service_tier?: string | null;
+}
+
+function toOption(m: ModelInfo): ModelOption {
+  const tiers = [...(m.service_tiers ?? [])];
+  if (m.additional_speed_tiers?.includes('fast') && !tiers.some((t) => t.id === 'priority')) tiers.push({ id: 'priority', name: 'Fast' });
+  return {
+    id: m.slug,
+    name: m.display_name || m.slug,
+    ...(m.description ? { description: m.description } : {}),
+    reasoningLevels: (m.supported_reasoning_levels ?? []).map((l) => ({ effort: l.effort, ...(l.description ? { description: l.description } : {}) })),
+    ...(m.default_reasoning_level ? { defaultReasoning: m.default_reasoning_level } : {}),
+    serviceTiers: tiers,
+    ...(m.default_service_tier ? { defaultServiceTier: m.default_service_tier } : {}),
+  };
 }
 
 export class CodexAuthLLM implements LLMProvider {
@@ -137,8 +162,13 @@ export class CodexAuthLLM implements LLMProvider {
     return `${this.base()}${path}`;
   }
 
+  /** Models for the picker: name, reasoning levels and speed tiers from the catalog. */
+  async listModels(signal: AbortSignal): Promise<ModelOption[]> {
+    return (await this.catalog(signal)).map(toOption);
+  }
+
   /** Models from the backend's list (visibility `list`), cached for 10 minutes. */
-  async listModels(signal: AbortSignal): Promise<ModelInfo[]> {
+  async catalog(signal: AbortSignal): Promise<ModelInfo[]> {
     if (this.models && this.now() - this.models.at < 600_000) return this.models.list;
     const t = await this.token(signal);
     if ('reason' in t) throw new ProviderError(this.id, 'unavailable', t.reason);
@@ -156,7 +186,7 @@ export class CodexAuthLLM implements LLMProvider {
   private async resolveModel(req: LLMRequest<unknown>, signal: AbortSignal): Promise<string> {
     const wanted = req.model ?? this.config.model ?? 'auto';
     if (wanted !== 'auto') return wanted;
-    const first = (await this.listModels(signal))[0]?.slug;
+    const first = (await this.catalog(signal))[0]?.slug;
     if (!first) throw new ProviderError(this.id, 'unavailable', 'the Codex backend lists no models for this account');
     return first;
   }
@@ -164,6 +194,12 @@ export class CodexAuthLLM implements LLMProvider {
   async completeJSON<T>(req: LLMRequest<T>): Promise<LLMResult<T>> {
     const model = await this.resolveModel(req as LLMRequest<unknown>, req.signal);
     const format = { type: 'json_schema', name: req.schemaName, strict: true, schema: jsonSchemaOf(req.schema) };
+    // Send only what this model accepts: its reasoning levels and catalog tiers (flex always works).
+    const info = await this.catalog(req.signal).then((list) => list.find((m) => m.slug === model), () => undefined);
+    const option = info ? toOption(info) : undefined;
+    const levels = option?.reasoningLevels?.length ? option.reasoningLevels.map((l) => l.effort) : this.config.reasoningEffort ? [this.config.reasoningEffort] : [];
+    const effort = effortFor(req.reasoningEffort ?? this.config.reasoningEffort, req.task, levels);
+    const tier = req.serviceTier && (req.serviceTier === 'flex' || option?.serviceTiers?.some((t) => t.id === req.serviceTier)) ? req.serviceTier : undefined;
     return completeWithRepair(this.id, req, async (turns, signal) => {
       const t = await this.token(signal);
       if ('reason' in t) throw new ProviderError(this.id, 'unavailable', t.reason);
@@ -182,7 +218,8 @@ export class CodexAuthLLM implements LLMProvider {
           store: false,
           stream: true,
           text: { format },
-          ...(this.config.reasoningEffort ? { reasoning: { effort: this.config.reasoningEffort } } : {}),
+          ...(effort ? { reasoning: { effort } } : {}),
+          ...(tier ? { service_tier: tier } : {}),
         }),
       });
       if (!res.body) throw new ProviderError(this.id, 'server', 'empty response');

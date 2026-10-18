@@ -60,13 +60,20 @@ const call = (api: ReturnType<typeof createApi>, method: string, path: string, b
   );
 
 describe('T5: config', () => {
-  test('deep merge (objects merge, arrays replace) and env keys', () => {
+  test('deep merge (objects merge, arrays replace) and env keys', async () => {
     const merged = mergeConfig(DEFAULT_CONFIG, { llm: { chain: ['openrouter'] }, providers: { openrouter: { model: 'm' } } });
     expect(merged.llm.chain).toEqual(['openrouter']);
     expect(merged.providers.openrouter).toEqual({ enabled: true, model: 'm' });
     expect(merged.providers['codex-auth'].model).toBe('auto');
     const env = envOverrides({ OPENROUTER_API_KEY: 'k', LESEBUEHNE_LLM_CHAIN: 'a, b' });
     expect(env.llm?.chain).toEqual(['a', 'b']);
+    expect(env.llm?.exclusive).toBe(true);
+    expect(envOverrides({ LESEBUEHNE_LLM_CHAIN: 'none' }).llm?.chain).toEqual([]);
+    const { buildProviders } = await import('../src/providers.ts');
+    const open = buildProviders(mergeConfig(DEFAULT_CONFIG, { llm: { chain: ['openrouter'] } }), tmp);
+    expect(open.chain[0]).toBe('openrouter');
+    expect(open.chain).toContain('codex-auth');
+    expect(buildProviders(mergeConfig(DEFAULT_CONFIG, envOverrides({ LESEBUEHNE_LLM_CHAIN: 'none' })), tmp).chain).toEqual([]);
     expect(env.providers?.openrouter?.apiKey).toBe('k');
   });
 
@@ -266,6 +273,35 @@ describe('M4: /api/tts', () => {
     expect((await call(api, 'POST', '/api/tts', { ...body, voice: 'nope:x' })).status).toBe(404);
     const caps = (await (await call(api, 'GET', '/api/capabilities')).json()) as { providers: Array<{ id: string; voices?: unknown[] }> };
     expect(caps.providers.find((p) => p.id === 'qwentts')?.voices).toHaveLength(1);
+  });
+});
+
+describe('model choice', () => {
+  test('GET /api/llm/models lists the catalog; PUT /api/llm/settings saves model, reasoning and tier for new requests', async () => {
+    const { api, ctx } = setup([]);
+    const seen: Array<Record<string, unknown>> = [];
+    ctx.providers.registry.register({
+      kind: 'llm', id: 'picker', label: 'Picker', runsIn: ['server'], capabilities: {},
+      isAvailable: async () => ({ ok: true }),
+      listModels: async () => [{ id: 'm1', name: 'Model 1', reasoningLevels: [{ effort: 'low' }, { effort: 'high' }], serviceTiers: [{ id: 'priority', name: 'Fast' }] }],
+      completeJSON: async <T,>(r: LLMRequest<T>): Promise<never> => {
+        seen.push({ model: r.model, task: r.task, reasoningEffort: r.reasoningEffort, serviceTier: r.serviceTier });
+        throw new Error('stop');
+      },
+    });
+    const listed = (await (await call(api, 'GET', '/api/llm/models?provider=picker')).json()) as { models: Array<{ id: string }>; choice: object };
+    expect(listed.models.map((m) => m.id)).toEqual(['m1']);
+    expect(listed.choice).toEqual({});
+    expect((await call(api, 'GET', '/api/llm/models?provider=nope')).status).toBe(404);
+    const saved = await call(api, 'PUT', '/api/llm/settings', { provider: 'picker', model: 'm1', reasoning: 'high', serviceTier: 'priority' });
+    expect(((await saved.json()) as { choice: object }).choice).toEqual({ model: 'm1', reasoning: 'high', serviceTier: 'priority' });
+    expect(((await (await call(api, 'GET', '/api/llm/models?provider=picker')).json()) as { choice: object }).choice).toEqual({ model: 'm1', reasoning: 'high', serviceTier: 'priority' });
+    const caps = (await (await call(api, 'GET', '/api/capabilities')).json()) as { providers: Array<{ id: string; models?: boolean }> };
+    expect(caps.providers.find((p) => p.id === 'picker')?.models).toBe(true);
+    const { LlmSettings } = await import('../src/llm-settings.ts');
+    const fromDisk = new LlmSettings(join(ctx.dataDir, 'llm-settings.json'));
+    expect(fromDisk.options('picker', 'configured')).toEqual({ model: 'm1', reasoningEffort: 'high', serviceTier: 'priority' });
+    expect(fromDisk.options('other', 'configured')).toEqual({ model: 'configured', reasoningEffort: 'auto' });
   });
 });
 

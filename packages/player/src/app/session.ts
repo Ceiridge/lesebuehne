@@ -70,7 +70,7 @@ export class ReaderSession {
   readonly bookmarks = signal<Bookmark[]>([]);
   readonly follow = signal<FollowState>('follow');
   readonly panel = signal<Panel | null>(null);
-  readonly settingsTab = signal<'reading' | 'appearance' | 'stage' | 'ai' | 'storage'>('reading');
+  readonly settingsTab = signal<'reading' | 'appearance' | 'stage' | 'ai' | 'storage' | 'info'>('reading');
   readonly stageCachePaused = signal(false);
   private readonly speechCachePaused = signal(false);
   readonly debug = signal(false);

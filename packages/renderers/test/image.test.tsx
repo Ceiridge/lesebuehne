@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { ImageSpec, VisualPlan } from '@lesebuehne/core';
 import { render } from 'preact';
+import { act } from 'preact/test-utils';
 import { withDom } from '../../../tests/support/with-dom.ts';
 import { CAMERA_MOVE_SECONDS, cameraAt, cameraFor, Visual, visualState } from '../src/index.ts';
 
@@ -84,3 +85,34 @@ describe('M5: image and placeholder views', () => {
     expect(root.querySelector('.lb-image-fallback .lb-placeholder')).not.toBeNull();
   });
 });
+
+describe('image crossfade', () => {
+  withDom();
+  const plan = { mode: 'image', image: spec, keyTerms: ['Mauer'], cues: [] } as unknown as VisualPlan;
+  const at = (url: string) => {
+    const s = visualState(plan, [], 1, 'full', { image: { url } });
+    if (s.mode !== 'image') throw new Error('expected an image state');
+    return s;
+  };
+
+  test('a new picture loads under the current one and replaces it after the fade, without the fallback', async () => {
+    const root = document.createElement('div');
+    const layers = () => [...root.querySelectorAll('.lb-image-layer')].map((l) => `${l.querySelector('img')!.getAttribute('src')}:${l.className.replace('lb-image-layer is-', '')}`);
+    await act(() => render(<Visual state={at('a.png')} />, root));
+    expect(root.querySelector('.lb-image-fallback')).not.toBeNull();
+    await act(() => void root.querySelector('.lb-image-picture')!.dispatchEvent(new Event('load')));
+    expect(root.querySelector('.lb-image-fallback')).toBeNull();
+    await act(() => render(<Visual state={at('b.png')} />, root));
+    expect(layers()).toEqual(['a.png:ready', 'b.png:loading']);
+    expect(root.querySelector('.lb-image-fallback')).toBeNull();
+    await act(() => void root.querySelectorAll('.lb-image-picture')[1]!.dispatchEvent(new Event('load')));
+    expect(layers()).toEqual(['a.png:ready', 'b.png:ready']);
+    await act(() => new Promise((r) => setTimeout(r, 1500)));
+    expect(layers()).toEqual(['b.png:ready']);
+    // A picture this document has loaded before shows at once when it comes back.
+    render(null, root);
+    await act(() => render(<Visual state={at('b.png')} />, root));
+    expect(layers()).toEqual(['b.png:ready']);
+  });
+});
+

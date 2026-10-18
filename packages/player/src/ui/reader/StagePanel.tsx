@@ -1,6 +1,6 @@
 import type { StyleBible } from '@lesebuehne/core';
-import { StageView, visualState, type AnimationInit, type StageFrame, type VisualOptions, type VisualState } from '@lesebuehne/renderers';
-import { signal } from '@preact/signals';
+import { preloadImage, StageView, visualState, type AnimationInit, type StageFrame, type VisualOptions, type VisualState } from '@lesebuehne/renderers';
+import { effect, signal } from '@preact/signals';
 import { useEffect, useMemo } from 'preact/hooks';
 import type { ReaderSession } from '../../app/session.ts';
 import { resolvedTheme, settings } from '../../app/store.ts';
@@ -78,6 +78,12 @@ function paletteVars(sb: StyleBible | undefined): Record<string, string> | undef
 
 export function StagePanel({ session, subtitles = false }: { session: ReaderSession; subtitles?: boolean }) {
   const snapshot = useMemo(() => signal<StageSnapshot>(stageStep(session, session.env.timers.now())), [session]);
+
+  // Finished pictures are decoded ahead, so a stage change never waits on the fallback.
+  useEffect(() => effect(() => {
+    for (const image of session.images.value.values()) preloadImage(image.url);
+    for (const frame of session.imageSequence.value?.frames.value.values() ?? []) preloadImage(frame.url);
+  }), [session]);
 
   useEffect(() => {
     let raf = 0;

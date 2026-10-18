@@ -1,8 +1,9 @@
-import { estimateSeconds, JobQueue, type WordTiming } from '@lesebuehne/core';
+import { estimateSeconds, JobQueue, type QueueSnapshot, type WordTiming } from '@lesebuehne/core';
 import { signal } from '@preact/signals';
 import type { AudioState, TtsClip, TtsSource } from '../engine/audio-port.ts';
 import type { GenerationState } from './progress.ts';
 import { GenerationThroughput } from './throughput.ts';
+import { recordActivity } from './activity.ts';
 
 /** Synthesizes one utterance (the server's `/api/tts`). */
 export type Synthesize = (text: string, lang: string, voice: string, signal: AbortSignal) => Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }>;
@@ -92,6 +93,7 @@ export class TtsBuffer implements TtsSource {
           samples.push({ content: estimateSeconds(text, lang), audio: duration });
           this.cadence.set(voice, samples.slice(-24));
         }
+        recordActivity({ kind: 'speech', outcome: result.cached === true ? 'cached' : 'new', ms: this.now() - start, label: text, audioSeconds: duration });
         if (result.cached === false && duration > 0) {
           const samples = this.samples.get(voice) ?? new GenerationThroughput();
           samples.add(start, this.now(), duration);
@@ -115,7 +117,9 @@ export class TtsBuffer implements TtsSource {
         this.clips.delete(key);
         this.cancelled.delete(key);
         this.ready.delete(key);
-        this.setState(key, e instanceof DOMException && e.name === 'AbortError' ? 'idle' : 'error');
+        const aborted = e instanceof DOMException && e.name === 'AbortError';
+        if (!aborted) recordActivity({ kind: 'speech', outcome: 'failed', ms: 0, label: text });
+        this.setState(key, aborted ? 'idle' : 'error');
         this.update();
       }
     });
@@ -161,6 +165,13 @@ export class TtsBuffer implements TtsSource {
     const cadence = this.cadence.get(voice) ?? [];
     const speed = cadence.length ? cadence.reduce((n, s) => n + s.content, 0) / cadence.reduce((n, s) => n + s.audio, 0) : 1;
     return { url, seconds: estimateSeconds(text, lang) / (speed > 0 ? speed : 1) };
+  }
+
+  /** The synthesis queue, with the spoken text as each job's label. */
+  queueSnapshot(): QueueSnapshot {
+    const s = this.queue.snapshot();
+    const text = (key: string): string => key.split('')[2] ?? key;
+    return { ...s, running: s.running.map(text), queued: s.queued.map(text) };
   }
 
   setConcurrency(value: number): void {

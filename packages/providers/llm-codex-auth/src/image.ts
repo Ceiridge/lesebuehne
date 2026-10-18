@@ -46,7 +46,7 @@ export class CodexImageProvider implements ImageProvider {
   private async model(signal: AbortSignal): Promise<string> {
     const wanted = this.config.model ?? 'auto';
     if (wanted !== 'auto') return wanted;
-    const first = (await this.auth.listModels(signal))[0]?.slug;
+    const first = (await this.auth.catalog(signal))[0]?.slug;
     if (!first) throw new ProviderError(this.id, 'unavailable', 'the Codex backend lists no models for this account');
     return first;
   }

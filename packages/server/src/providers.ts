@@ -135,6 +135,6 @@ export function buildProviders(config: ServerConfig, dataDir: string, fetchImpl?
 
   // Configured chain first, then any other registered LLM (e.g. extra openai-compatible instances).
   const registered = registry.list('llm').map((x) => x.id);
-  const chain = [...config.llm.chain.filter((id) => registered.includes(id)), ...registered.filter((id) => !config.llm.chain.includes(id))];
+  const chain = [...config.llm.chain.filter((id) => registered.includes(id)), ...(config.llm.exclusive ? [] : registered.filter((id) => !config.llm.chain.includes(id)))];
   return { registry, chain, imageChain, taskModel: (id, task) => tasks.get(id)?.[task], files };
 }

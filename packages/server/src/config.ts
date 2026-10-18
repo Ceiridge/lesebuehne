@@ -56,6 +56,11 @@ export interface ServerConfig {
   llm: {
     /** Provider ids in fallback order; the heuristic director always comes last. */
     chain: string[];
+    /**
+     * Use only the providers in `chain` (`LESEBUEHNE_LLM_CHAIN` sets this). Otherwise other
+     * registered text providers follow the chain as further fallbacks.
+     */
+    exclusive?: boolean;
   };
   director: {
     budget: { images: number; animations: number };
@@ -138,7 +143,8 @@ export function envOverrides(env: Env): ConfigInput {
     };
   }
   if (env.LESEBUEHNE_DATA_DIR) o.dataDir = env.LESEBUEHNE_DATA_DIR;
-  if (env.LESEBUEHNE_LLM_CHAIN) o.llm = { chain: env.LESEBUEHNE_LLM_CHAIN.split(',').map((s) => s.trim()).filter(Boolean) };
+  // An explicit chain is exact: `none` (or any id that is not registered) means no text model.
+  if (env.LESEBUEHNE_LLM_CHAIN) o.llm = { chain: env.LESEBUEHNE_LLM_CHAIN.split(',').map((s) => s.trim()).filter((s) => s && s !== 'none'), exclusive: true };
   if (env.OPENROUTER_API_KEY || env.OPENROUTER_MODEL) {
     providers.openrouter = { ...(env.OPENROUTER_API_KEY ? { apiKey: env.OPENROUTER_API_KEY } : {}), ...(env.OPENROUTER_MODEL ? { model: env.OPENROUTER_MODEL } : {}) };
   }

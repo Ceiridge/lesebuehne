@@ -19,6 +19,14 @@ interface Entry {
   seq: number;
 }
 
+export interface QueueSnapshot {
+  concurrency: number;
+  /** Keys of running jobs. */
+  running: string[];
+  /** Keys of waiting jobs, next first. */
+  queued: string[];
+}
+
 export class JobQueue {
   private readonly entries = new Map<string, Entry>();
   private running = 0;
@@ -63,6 +71,16 @@ export class JobQueue {
 
   get size(): number {
     return this.entries.size;
+  }
+
+  /** What runs and how much waits (for status displays). */
+  snapshot(): QueueSnapshot {
+    const all = [...this.entries.values()];
+    return {
+      concurrency: this.concurrency,
+      running: all.filter((e) => e.running).map((e) => e.job.key),
+      queued: all.filter((e) => !e.running).sort((a, b) => a.job.priority - b.job.priority || a.seq - b.seq).map((e) => e.job.key),
+    };
   }
 
   cancel(key: string): void {

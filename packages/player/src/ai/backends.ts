@@ -1,4 +1,4 @@
-import { MemoryCache, ProviderRegistry, TaskGroup, type CacheScope, type CacheStats, type Book, type ImageProvider, type LLMProvider, type ProviderStats, type ResultCache, type TTSProvider, type TTSVoice, type VisualPlan, type WordTiming } from '@lesebuehne/core';
+import { MemoryCache, ProviderRegistry, TaskGroup, type CacheScope, type CacheStats, type Book, type ImageProvider, type LLMProvider, type ModelOption, type ProviderStats, type ResultCache, type TTSProvider, type TTSVoice, type VisualPlan, type WordTiming } from '@lesebuehne/core';
 import {
   DEFAULT_BUDGET,
   DirectorService,
@@ -41,6 +41,8 @@ export interface ProviderStatus {
   concurrency?: number;
   /** TTS providers on the server: audio can play while it is generated (`ttsStreamUrl`). */
   streaming?: boolean;
+  /** Text providers on the server that can list their models (model picker). */
+  models?: boolean;
   usage?: ProviderStats | undefined;
 }
 
@@ -60,6 +62,13 @@ export interface BackendStatus {
   budget: PlanBudget;
 }
 
+/** Model, reasoning (`auto`, `default` or a level) and speed tier chosen for a server text provider. */
+export interface LlmChoice {
+  model?: string;
+  reasoning?: string;
+  serviceTier?: string;
+}
+
 /** Where AI plans come from: the local server or providers in this browser (BYOK). */
 export interface AiBackend {
   readonly mode: 'server' | 'browser';
@@ -76,6 +85,9 @@ export interface AiBackend {
   tts?(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }>;
   /** Server TTS: a URL an `<audio>` element plays while the utterance is still being generated. */
   ttsStreamUrl?(text: string, lang: string, voice: string): string;
+  /** Server text providers: the models on offer and the saved choice. */
+  llmModels?(providerId: string, signal?: AbortSignal): Promise<{ models: ModelOption[] | null; choice: LlmChoice; error?: string }>;
+  saveLlmChoice?(providerId: string, choice: LlmChoice): Promise<LlmChoice>;
   /** Starts an own sign-in on the server; returns the URL to open. */
   login?(providerId: string): Promise<string>;
   cacheStats?(): Promise<CacheStats>;
@@ -183,6 +195,16 @@ export class ServerBackend implements AiBackend {
     const words = JSON.parse(decodeURIComponent(res.headers.get('x-lb-words') ?? '%5B%5D')) as WordTiming[];
     const cached = res.headers.get('x-lb-cached');
     return { audio: await res.blob(), words, ...(cached === 'true' || cached === 'false' ? { cached: cached === 'true' } : {}) };
+  }
+
+  async llmModels(providerId: string, signal?: AbortSignal): Promise<{ models: ModelOption[] | null; choice: LlmChoice; error?: string }> {
+    const r = await this.http(`${this.url('api/llm/models')}?${new URLSearchParams({ provider: providerId })}`, signal ? { signal } : {});
+    return readJson(r);
+  }
+
+  async saveLlmChoice(providerId: string, choice: LlmChoice): Promise<LlmChoice> {
+    const r = await this.http(this.url('api/llm/settings'), { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: providerId, ...choice }) });
+    return (await readJson<{ choice: LlmChoice }>(r)).choice;
   }
 
   ttsStreamUrl(text: string, lang: string, voice: string): string {

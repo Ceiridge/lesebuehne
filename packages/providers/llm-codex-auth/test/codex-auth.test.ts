@@ -128,6 +128,38 @@ describe('codex-auth: requests like OpenCode', () => {
     expect(body.input[0]).toEqual({ role: 'user', content: [{ type: 'input_text', text: 'say ok' }] });
   });
 
+  test('catalog: names, reasoning levels and speed tiers; requests send only what the model supports', async () => {
+    const bodies: Array<Record<string, any>> = [];
+    const fetchFn = async (url: string, init?: RequestInit) => {
+      if (url.includes('/models')) {
+        return Response.json({ models: [
+          { slug: 'smart', display_name: 'Smart', description: 'Thinks.', visibility: 'list', default_reasoning_level: 'medium',
+            supported_reasoning_levels: [{ effort: 'low', description: 'Quick' }, { effort: 'medium', description: 'Balanced' }, { effort: 'high', description: 'Deep' }],
+            service_tiers: [{ id: 'priority', name: 'Fast', description: 'Faster answers' }] },
+          { slug: 'plain', visibility: 'list', supported_reasoning_levels: [], additional_speed_tiers: ['fast'] },
+        ] });
+      }
+      bodies.push(JSON.parse(String(init?.body)));
+      return sse([{ type: 'response.output_text.delta', delta: '{"answer":"OK"}' }, { type: 'response.completed', response: {} }]);
+    };
+    const p = new CodexAuthLLM({ sources: [fixed(token)], fetch: fetchFn, now: () => NOW });
+    const models = await p.listModels(new AbortController().signal);
+    expect(models[0]).toMatchObject({ id: 'smart', name: 'Smart', description: 'Thinks.', defaultReasoning: 'medium', serviceTiers: [{ id: 'priority', name: 'Fast' }] });
+    expect(models[0]!.reasoningLevels!.map((l) => l.effort)).toEqual(['low', 'medium', 'high']);
+    expect(models[1]).toMatchObject({ id: 'plain', name: 'plain', serviceTiers: [{ id: 'priority', name: 'Fast' }] });
+
+    await p.completeJSON({ ...req, model: 'smart', task: 'plan', reasoningEffort: 'auto', serviceTier: 'priority' });
+    expect(bodies[0]).toMatchObject({ model: 'smart', reasoning: { effort: 'low' }, service_tier: 'priority' });
+    await p.completeJSON({ ...req, model: 'smart', task: 'animate', reasoningEffort: 'auto', serviceTier: 'ultra' });
+    expect(bodies[1]!.reasoning).toEqual({ effort: 'medium' });
+    expect(bodies[1]!.service_tier).toBeUndefined();
+    await p.completeJSON({ ...req, model: 'smart', reasoningEffort: 'xhigh' });
+    expect(bodies[2]!.reasoning).toBeUndefined();
+    await p.completeJSON({ ...req, model: 'plain', task: 'plan', reasoningEffort: 'auto', serviceTier: 'flex' });
+    expect(bodies[3]!.reasoning).toBeUndefined();
+    expect(bodies[3]!.service_tier).toBe('flex');
+  });
+
   test('backend errors: unsupported model → bad-request, usage limit → rate-limit', async () => {
     const reject = new CodexAuthLLM({
       sources: [fixed(token)],

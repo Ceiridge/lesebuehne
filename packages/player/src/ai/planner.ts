@@ -1,10 +1,11 @@
-import { JobQueue, type AnimationProgram, type Book, type Section, type StyleBible, type VisualPlan } from '@lesebuehne/core';
+import { JobQueue, type QueueSnapshot, type AnimationProgram, type Book, type Section, type StyleBible, type VisualPlan } from '@lesebuehne/core';
 import { budgetAfter, DEFAULT_BUDGET, preferBudget, type ImageOptions, type PlanBudget, type PlanResponse, type VisualPreference } from '@lesebuehne/director';
 import type { AiBackend } from './backends.ts';
 import { aiStatus } from './state.ts';
 import type { GenerationState } from './progress.ts';
 import { signal } from '@preact/signals';
 import { GenerationThroughput } from './throughput.ts';
+import { kindOfKey, recordActivity } from './activity.ts';
 
 interface StageMeasurement { start?: number; uncached: boolean; known: boolean }
 
@@ -82,9 +83,11 @@ export class AiPlanner {
     const revision = {};
     this.revisions.set(sectionId, revision);
     this.generation(sectionId, 'queued');
+    let started: number | undefined;
     return this.track(queue.enqueue({ key, priority, run: async (signal) => {
       this.generation(sectionId, 'working');
-      measurement.start ??= this.host.now();
+      started = this.host.now();
+      measurement.start ??= started;
       const result = await run(signal);
       signal.throwIfAborted();
       measurement.uncached ||= result.cached === false;
@@ -93,6 +96,7 @@ export class AiPlanner {
     } })).then((value) => {
       if (this.disposed || this.revisions.get(sectionId) !== revision) return;
       this.generation(sectionId, 'ready');
+      recordActivity({ kind: kindOfKey(key), outcome: value.cached === true ? 'cached' : 'new', ms: started === undefined ? 0 : this.host.now() - started, sectionId });
       const complete = accept(value) !== false;
       if (complete && measurement.known && measurement.uncached && measurement.start !== undefined) {
         this.throughput.add(measurement.start, this.host.now(), this.host.order.find((s) => s.id === sectionId)?.duration ?? 0);
@@ -103,6 +107,7 @@ export class AiPlanner {
       const aborted = e instanceof DOMException && e.name === 'AbortError';
       this.generation(sectionId, aborted ? 'idle' : 'error');
       if (!aborted) {
+        recordActivity({ kind: kindOfKey(key), outcome: 'failed', ms: 0, sectionId });
         this.failedAt.set(sectionId, this.host.now());
         this.note(undefined, e);
       }
@@ -118,6 +123,11 @@ export class AiPlanner {
 
   infoOf(sectionId: string): PlanInfo | undefined {
     return this.info.get(sectionId);
+  }
+
+  /** Plan and image queues for the info panel (keys like `plan:<sectionId>`). */
+  queues(): { plans: QueueSnapshot; images: QueueSnapshot } {
+    return { plans: this.planQueue.snapshot(), images: this.imageQueue.snapshot() };
   }
 
   /** Apply live without cancelling requests or discarding finished media. */
@@ -169,8 +179,10 @@ export class AiPlanner {
     if (this.style) return this.style;
     const pending = this.track(
       this.planQueue.enqueue({ key: 'style', priority: -1, run: async (signal) => {
+        const start = this.host.now();
         const result = await this.backend.prepare(this.host.book, {}, signal);
         signal.throwIfAborted();
+        recordActivity({ kind: 'style', outcome: (result as { cached?: boolean }).cached === true ? 'cached' : 'new', ms: this.host.now() - start });
         return result;
       } }),
     ).then(

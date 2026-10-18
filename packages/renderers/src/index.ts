@@ -15,7 +15,7 @@ export {
 export { MIN_DWELL_MS, StageScheduler, type StageFrame } from './stage/scheduler.ts';
 export { KineticType, ListDiagram, QuoteCard, StageView, TitleCard, Visual } from './components/visuals.tsx';
 export { DiagramView } from './components/diagram.tsx';
-export { ImageView, Placeholder } from './components/image.tsx';
+export { ImageView, Placeholder, preloadImage } from './components/image.tsx';
 export { cameraAt, cameraFor, CAMERA_MOVE_SECONDS, type Camera } from './state/camera.ts';
 export { AnimationView, type AnimationStatusListener } from './components/animation.tsx';
 export { READY_TIMEOUT_MS, SandboxHost, TICK_TIMEOUT_MS, type AnimationInit, type FramePort, type SandboxStatus } from './animation/host.ts';

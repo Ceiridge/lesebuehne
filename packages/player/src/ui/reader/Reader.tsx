@@ -16,6 +16,7 @@ import { SettingsPanel } from './SettingsPanel.tsx';
 import { StagePanel } from './StagePanel.tsx';
 import { RsvpView, SentenceView, StageSentence } from './Subtitles.tsx';
 import { TextPane } from './TextPane.tsx';
+import { useActivitySampler } from './InfoSettings.tsx';
 import { browserFullscreen } from './fullscreen.ts';
 
 const LAYOUTS: Array<{ id: Settings['layout']; icon: typeof IconStage; label: MessageKey }> = [
@@ -116,6 +117,7 @@ export function dispatch(session: ReaderSession, action: Action): boolean {
 
 /** The reader (B7–B9): top bar, stage, text, controls, panels. */
 export function Reader({ session }: { session: ReaderSession }) {
+  useActivitySampler(session);
   const layout = settings.value.layout;
   const zen = useSignal(false);
   const chrome = useSignal<'top' | 'bottom' | 'both' | null>(null);

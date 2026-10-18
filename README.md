@@ -81,7 +81,12 @@ Run `bun run doctor` to see which providers are ready, and why the others are no
 | Voices | `qwentts`, `openai`, `openai-compatible` | `TTS_BASE_URL` and `TTS_VOICES`, or a `tts` entry in the config |
 
 The server tries the text models in the order of `llm.chain`. If all of them fail, the player uses
-its built-in diagrams. Reading never waits for the AI.
+its built-in diagrams. Reading never waits for the AI. `LESEBUEHNE_LLM_CHAIN=openrouter` uses only
+the providers you name. `LESEBUEHNE_LLM_CHAIN=none` turns the text model off.
+
+Choose the model, the speed tier and the reasoning level under **Settings → Connect AI → Text model
+& reasoning**. The list comes from the provider, for example the Codex catalog of your ChatGPT
+account. The default reasoning is low for stage plans and medium for style and animations.
 
 ### Server voices
 

@@ -6,21 +6,42 @@ import { throughputState } from '../../ai/throughput.ts';
 import { settings } from '../../app/store.ts';
 import { useMemo } from 'preact/hooks';
 
-/** Small rolling-average readout; readiness remains on the two tracks above it. */
-export function GenerationPace({ session }: { session: ReaderSession }) {
+export interface GenerationRate {
+  enabled: boolean;
+  /** Generated seconds per wall second (rolling average), if measured. */
+  speed?: number | undefined;
+  /** What reading needs: the tempo for speech, the timeline pace for the stage. */
+  target: number;
+}
+
+/** Word count of a book (RSVP pace). */
+export const bookWords = (session: ReaderSession): number => session.timeline.entries.reduce((n, e) => n + e.sentence.tokens.filter((w) => w.wordLike).length, 0);
+
+/** Generation pace against reading pace for speech and stage (shared by the tracks and the info panel). */
+export function generationRates(session: ReaderSession, words: number): Record<'speech' | 'stage', GenerationRate> {
   const progress = session.generation.value;
   const tempo = session.engine.currentTempo;
   const speech = ttsStatus.value;
   const contentSpeed = progress.speechEnabled && !speech.limited ? speech.contentSpeed ?? 1 : 1;
-  const words = useMemo(() => session.timeline.entries.reduce((n, e) => n + e.sentence.tokens.filter((w) => w.wordLike).length, 0), [session]);
   // Silent RSVP follows words/minute rather than the voice's playback rate. Pauses make this
   // a conservative estimate of the required stage throughput.
   const stageTempo = session.pacerMode && words > 0 ? session.timeline.duration * settings.value.rsvpWpm / (60 * words) : tempo * contentSpeed;
+  const speechOn = progress.speechEnabled && !session.pacerMode;
+  const stageOn = !!session.ai && session.stageVisible;
+  return {
+    speech: { enabled: speechOn, speed: speechOn ? speech.generationSpeed : undefined, target: tempo },
+    stage: { enabled: stageOn, speed: stageOn ? session.ai?.generationSpeed.value : undefined, target: stageTempo },
+  };
+}
+
+/** Small rolling-average readout; readiness remains on the two tracks above it. */
+export function GenerationPace({ session }: { session: ReaderSession }) {
+  const progress = session.generation.value;
+  const words = useMemo(() => bookWords(session), [session]);
+  const rates = generationRates(session, words);
   return <div class="generation-pace" aria-label={t('generation.pace')}>
     {(['speech', 'stage'] as const).map((kind) => {
-      const enabled = kind === 'speech' ? progress.speechEnabled && !session.pacerMode : !!session.ai && session.stageVisible;
-      const speed = enabled ? kind === 'speech' ? ttsStatus.value.generationSpeed : session.ai?.generationSpeed.value : undefined;
-      const target = kind === 'speech' ? tempo : stageTempo;
+      const { enabled, speed, target } = rates[kind];
       const state = throughputState(speed, target);
       const hiddenStage = kind === 'stage' && !session.stageVisible;
       const ready = progress[kind].length > 0 && progress[kind].every((r) => r.state === 'ready');
@@ -45,9 +66,26 @@ export function GenerationSegments({ ranges, start, end, vertical = false }: { r
   })}</>;
 }
 
-export function GenerationProgress({ session }: { session: ReaderSession }) {
+/** Legend for the tracks: states, visual kinds, and the pace readout. */
+export function GenerationLegend({ session }: { session: ReaderSession }) {
+  const progress = session.generation.value;
+  return <div class="generation-legends">
+    <div class="generation-legend"><span><i class="is-ready" />{t('generation.ready')}</span><span><i class="is-working" />{t('generation.working')}</span><span><i class="is-queued" />{t('generation.queued')}</span></div>
+    <div class="generation-kind-legend" aria-label={t('generation.kinds')}>
+      {STAGE_KINDS.filter(kind => progress.stage.some(r => r.stageKind === kind && r.state !== 'idle')).map(kind => <span key={kind} class={`generation-kind-${kind}`}><i />{t(`generation.kind.${kind}`)}</span>)}
+    </div>
+    <GenerationPace session={session} />
+  </div>;
+}
+
+/**
+ * Stage and speech tracks. `start`/`end` select the visible part of the book (timeline zoom); the
+ * percentages always cover the whole book. Without `legend: false` the legend follows the tracks.
+ */
+export function GenerationProgress({ session, start = 0, end, legend = true }: { session: ReaderSession; start?: number; end?: number; legend?: boolean }) {
   const progress = session.generation.value;
   const duration = session.timeline.duration;
+  const viewEnd = end ?? duration;
   return <div class="generation-progress">
     {(['stage', 'speech'] as const).map((kind) => {
       const ranges = progress[kind];
@@ -60,18 +98,14 @@ export function GenerationProgress({ session }: { session: ReaderSession }) {
         <span class="generation-label">{label}</span>
         <div class="generation-track" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Number(percent.toFixed(1))}
           aria-valuetext={disabled ? t('generation.onDemand') : `${percent.toFixed(1)}% ${t('generation.ready')}${working ? ` · ${t('generation.working')}` : ''}`}>
-          <GenerationSegments ranges={ranges} start={0} end={duration} />
+          <GenerationSegments ranges={ranges} start={start} end={viewEnd} />
         </div>
         <span class={`generation-value${working ? ' is-working' : ''}`} title={disabled ? t('generation.onDemand') : `${t('generation.ready')}${working ? ` · ${t('generation.working')}` : ''}${error ? ` · ${t('generation.error')}` : ''}`}>
           {disabled ? '—' : `${percent.toFixed(1)}%`}{error ? ' !' : ''}
         </span>
       </div>;
     })}
-    <div class="generation-legend"><span><i class="is-ready" />{t('generation.ready')}</span><span><i class="is-working" />{t('generation.working')}</span><span><i class="is-queued" />{t('generation.queued')}</span></div>
-    <div class="generation-kind-legend" aria-label={t('generation.kinds')}>
-      {STAGE_KINDS.filter(kind => progress.stage.some(r => r.stageKind === kind && r.state !== 'idle')).map(kind => <span key={kind} class={`generation-kind-${kind}`}><i />{t(`generation.kind.${kind}`)}</span>)}
-    </div>
-    <GenerationPace session={session} />
+    {legend ? <GenerationLegend session={session} /> : null}
   </div>;
 }
 

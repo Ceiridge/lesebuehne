@@ -1,10 +1,11 @@
-import { JobQueue, contentHash, type Book, type StyleBible, type Timeline, type VisualPlan } from '@lesebuehne/core';
+import { JobQueue, contentHash, type QueueSnapshot, type Book, type StyleBible, type Timeline, type VisualPlan } from '@lesebuehne/core';
 import type { ImageOptions } from '@lesebuehne/director';
 import { batch, signal } from '@preact/signals';
 import type { AiBackend, ImageResult } from './backends.ts';
 import type { GenerationState } from './progress.ts';
 import { GenerationThroughput } from './throughput.ts';
 import { aiStatus } from './state.ts';
+import { recordActivity } from './activity.ts';
 
 const DWELL_MS = 1500;
 const RETRY_AFTER_MS = 120_000;
@@ -93,6 +94,19 @@ export class ImageSequencePlanner {
   }
 
   sceneIndex(entry: number): number { return this.byEntry[entry] ?? 0; }
+
+  /** Section and opening words of a batch, for the info panel. */
+  describe(group: number): { sectionId?: string; label?: string } {
+    const scene = this.scenes[this.groups[group]?.[0] ?? -1];
+    return scene ? { sectionId: scene.sectionId, label: scene.text } : {};
+  }
+
+  /** The image queue for the info panel, with each batch's opening words as its label. */
+  queueSnapshot(): QueueSnapshot {
+    const s = this.queue.snapshot();
+    const label = (key: string): string => this.describe(Number(key.slice('images:'.length))).label ?? key;
+    return { ...s, running: s.running.map(label), queued: s.queued.map(label) };
+  }
   setImageConcurrency(value: number): void {
     this.queue.setConcurrency(Math.min(4, Math.max(1, value)));
   }
@@ -201,6 +215,7 @@ export class ImageSequencePlanner {
       });
       this.backlog.delete(group);
       this.failedAt.delete(group);
+      recordActivity({ kind: 'image', outcome: result.r.cached === true ? 'cached' : 'new', ms: this.host.now() - result.start, count: indices.length, ...this.describe(group) });
       aiStatus.value = { ...aiStatus.peek(), limited: false };
       if (result.r.cached === false) {
         this.throughput.add(result.start, this.host.now(), indices.reduce((n, i) => n + this.scenes[i]!.end - this.scenes[i]!.start, 0));
@@ -211,6 +226,7 @@ export class ImageSequencePlanner {
       const aborted = error instanceof DOMException && error.name === 'AbortError';
       this.mark(group, aborted ? 'idle' : 'error');
       if (!aborted) {
+        recordActivity({ kind: 'image', outcome: 'failed', ms: 0, ...this.describe(group) });
         this.failedAt.set(group, this.host.now());
         aiStatus.value = { ...aiStatus.peek(), limited: true, lastError: error instanceof Error ? error.message : String(error) };
       }

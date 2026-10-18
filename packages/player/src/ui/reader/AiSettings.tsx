@@ -6,6 +6,7 @@ import { useEnv } from '../../app/env.ts';
 import type { ReaderSession } from '../../app/session.ts';
 import { toast } from '../../app/store.ts';
 import { t, type MessageKey } from '../../i18n/i18n.ts';
+import { ModelSettings } from './ModelSettings.tsx';
 
 const NEEDS_BASE_URL: ReadonlySet<BrowserProviderId> = new Set(['openai-compatible', 'anthropic-compatible']);
 
@@ -140,6 +141,7 @@ export function AiSettings({ session }: { session?: ReaderSession }) {
       <header class="settings-intro" id="settings-ai"><h3>{t(session ? 'settings.tab.ai' : 'ai.title')}</h3><p>{t('ai.overviewHint')}</p></header>
       <div class="connection-status" role="status"><span class={backend ? 'connection-dot is-ok' : 'connection-dot'} /><div><strong>{aiConnecting.value ? t('ai.connecting') : where}</strong><span>{t(backend?.mode === 'server' ? 'ai.activeServerHint' : backend?.mode === 'browser' ? 'ai.activeBrowserHint' : 'ai.activeOfflineHint')}</span></div></div>
       <Capabilities />
+      <ModelSettings />
       <details class="settings-fold"><summary>{t('ai.connectionSetup')}</summary><div class="fold-body">
       <div class="field">
         <span class="field-label" id="ai-mode-label">

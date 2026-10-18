@@ -84,7 +84,7 @@ export function Visual({ state, title, onAnimationStatus }: { state: VisualState
   }
   if (state.mode === 'list') return <ListDiagram {...(state.title ? { title: state.title } : {})} items={state.items} template={state.template} />;
   if (state.mode === 'diagram') return <DiagramView state={state} />;
-  if (state.mode === 'image') return <ImageView key={state.url} state={state} fallback={<Visual state={state.fallback} title={title} />} />;
+  if (state.mode === 'image') return <ImageView state={state} fallback={<Visual state={state.fallback} title={title} />} />;
   if (state.mode === 'placeholder') return <Placeholder>{<Visual state={state.overlay} title={title} />}</Placeholder>;
   if (state.mode === 'quote') return <QuoteCard text={state.text} opacity={state.opacity} />;
   // Before the first key term is spoken the stage shows where we are, not an empty canvas.

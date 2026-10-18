@@ -10,6 +10,7 @@ import type { ProviderSetup } from './providers.ts';
 import { TtsService } from './tts.ts';
 import { ImageService } from './images.ts';
 import { DiskStore } from './disk-store.ts';
+import { LlmChoiceSchema, LlmSettings } from './llm-settings.ts';
 
 export const SERVER_VERSION = '0.2.0';
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '[::1]']);
@@ -109,6 +110,32 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
   }
 
   const tts = new TtsService(registry, join(ctx.dataDir, 'cache', 'tts'));
+  const llmSettings = new LlmSettings(join(ctx.dataDir, 'llm-settings.json'));
+
+  /** `GET /api/llm/models?provider=…`: the provider's models (if it can list them) and the saved choice. */
+  async function llmModels(req: Request): Promise<Response> {
+    const id = new URL(req.url).searchParams.get('provider') ?? '';
+    const p = registry.get(id, 'llm');
+    if (!p) return fail(404, 'unknown-provider');
+    const choice = llmSettings.get(id);
+    if (!p.listModels) return json({ provider: id, models: null, choice });
+    try {
+      return json({ provider: id, models: await p.listModels(req.signal), choice });
+    } catch (e) {
+      return json({ provider: id, models: null, choice, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  /** `PUT /api/llm/settings`: saves model, reasoning and speed for one provider. */
+  async function saveLlmSettings(req: Request): Promise<Response> {
+    const body = LlmChoiceSchema.extend({ provider: z.string().min(1) }).safeParse(await req.json().catch(() => undefined));
+    if (!body.success) return fail(400, 'bad-request', body.error.message);
+    const { provider, ...choice } = body.data;
+    if (!registry.get(provider, 'llm')) return fail(404, 'unknown-provider');
+    const saved = await llmSettings.set(provider, choice);
+    emit({ type: 'status' });
+    return json({ provider, choice: saved });
+  }
   const images = new ImageService({
     registry,
     chain: ctx.providers.imageChain ?? [],
@@ -119,7 +146,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     log,
   });
   const director = new DirectorService({
-    complete: registryComplete(registry, chain, ctx.providers.taskModel),
+    complete: registryComplete(registry, chain, (providerId, task) => llmSettings.options(providerId, ctx.providers.taskModel(providerId, task))),
     cache: ctx.cache,
     chainId: chain.join(','),
     budget: ctx.config.director.budget,
@@ -213,6 +240,7 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
           source: p instanceof CodexAuthLLM ? (p.lastSource ?? null) : null,
           login: p.id === 'codex-auth' || p.id === 'chatgpt-plan',
           ...(p.kind === 'tts' ? { voices: p.voices, concurrency: p.limits?.concurrency ?? 2, streaming: !!p.synthesizeStream } : {}),
+          ...(p.kind === 'llm' ? { models: !!p.listModels } : {}),
         };
       }),
     );
@@ -321,6 +349,8 @@ export function createApi(ctx: ApiContext): { handle(req: Request): Promise<Resp
     else if (req.method === 'GET' && path === '/api/usage') res = usage();
     else if (req.method === 'GET' && path === '/api/events') res = events(req);
     else if (req.method === 'GET' && path === '/api/cache') res = await cacheStats();
+    else if (req.method === 'GET' && path === '/api/llm/models') res = await llmModels(req);
+    else if (req.method === 'PUT' && path === '/api/llm/settings') res = await saveLlmSettings(req);
     else if (req.method === 'POST' && path === '/api/cache/clear') res = await clearCache(req);
     else if (req.method === 'POST' && path === '/api/llm/plan') res = await run('stage', req, plan);
     else if (req.method === 'POST' && path === '/api/llm/prepare') res = await run('stage', req, prepare);

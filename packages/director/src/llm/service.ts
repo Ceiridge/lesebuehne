@@ -192,19 +192,23 @@ export class DirectorService {
   }
 }
 
+/** Per-provider request options for a task: a model id, or model, reasoning level and service tier. */
+export type TaskOptions = (providerId: string, task: 'plan' | 'style' | 'animate') => string | { model?: string; reasoningEffort?: string; serviceTier?: string } | undefined;
+
 /** `Complete` over a provider chain: the first available provider answers; usage is recorded. */
 export function registryComplete(
   registry: ProviderRegistry,
   chain: readonly string[],
-  taskModel: (providerId: string, task: 'plan' | 'style' | 'animate') => string | undefined = () => undefined,
+  taskOptions: TaskOptions = () => undefined,
 ): (task: 'plan' | 'style' | 'animate') => Complete {
   return (task) => async (req) => {
     const r = await registry.run(
       'llm',
       chain,
       async (p, signal) => {
-        const model = taskModel(p.id, task);
-        const res = await p.completeJSON({ ...req, signal, ...(model ? { model } : {}) });
+        const o = taskOptions(p.id, task);
+        const options = typeof o === 'string' ? { model: o } : (o ?? {});
+        const res = await p.completeJSON({ ...req, signal, task, ...options });
         registry.addUsage(p.id, res.usage);
         return res;
       },
