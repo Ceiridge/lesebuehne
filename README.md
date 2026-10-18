@@ -1,358 +1,135 @@
 # Lesebühne
 
-A reading stage for non-fiction: the player reads a book aloud word for word, highlights the
-current paragraph, sentence and word, and shows calm visuals next to the text (list diagrams and
-key terms). Everything runs in the browser; the tooling is TypeScript on [Bun](https://bun.sh).
+Lesebühne ("reading stage") reads a book aloud word for word. The current word is highlighted in
+the text, and a stage next to the text shows calm visuals: key terms, diagrams, animations and
+illustrations. It works for novels as well as for non-fiction.
 
-The text is never changed: what you see and what you hear come from the same canonical text.
+The player runs in the browser. AI is optional: without it, you get browser voices and simple
+diagrams. With it, an LLM plans the visuals, an image model paints scenes, and a neural voice reads.
 
-## Private use only
+The text is never changed. What you see and what you hear come from the same text.
 
-- This project is for private use.
-- Do not host processed bundles of copyrighted books in public.
-- The project does not circumvent DRM. DRM-protected books are rejected, not decrypted.
+## Features
 
-## Try it
+- **Import:** EPUB 2/3 (without DRM), TXT and Markdown. Books stay in the browser (IndexedDB),
+  with reading position and bookmarks.
+- **Reading:** word, sentence and paragraph highlight. Click a word to continue from there.
+  Tempo 0.75× to 2.5×. Footnotes can be skipped, read inline, or read at the end of the section.
+- **Views:** stage and text, cinema with subtitles, sentence by sentence, text over the stage,
+  full page, text only, and word by word (RSVP, up to 900 words per minute).
+- **Visuals:** twelve diagram templates, key terms, quotes, sandboxed animations, and
+  illustrations with a slow pan and zoom. Each book gets one consistent style.
+- **Voices:** browser voices (Web Speech API), or server voices such as a local
+  [Qwen3-TTS](https://github.com/ServeurpersoCom/qwentts.cpp) or any OpenAI-compatible speech endpoint.
+- **App:** German and English interface, light, sepia and dark themes, four reading fonts,
+  installable as an offline web app.
+
+## Quick start
+
+You need [Bun](https://bun.sh) 1.4.3 or later and a current Chromium-based browser, Firefox or Safari.
 
 ```sh
-bun install && bun run samples && bun run dev
+bun install
+bun run samples   # downloads two public-domain sample texts
+bun run dev
 ```
 
-`bun run samples` downloads the public-domain sample texts once (Project Gutenberg) and derives
-the files in `samples/` (checked against SHA-256 hashes). Without them the start page has no
-samples and the sample-based tests are skipped.
+Open `http://127.0.0.1:3000/`, choose a sample, and press <kbd>Space</kbd>.
+Press <kbd>?</kbd> in the reader for all keyboard shortcuts.
 
-Open the printed URL (`http://127.0.0.1:3000/`), click the Kant sample
-("Beantwortung der Frage: Was ist Aufklärung?") and press <kbd>Space</kbd>.
+## Where it runs
 
-## Requirements
-
-- Bun 1.4.3 or later (Windows, macOS or Linux; any shell).
-- A current Chromium-based browser, Firefox or Safari. Reading aloud uses the browser's speech
-  voices (Web Speech API). Local voices (for example the Windows voices Hedda, Katja and Stefan)
-  report every word, so the word highlight is exact. Online voices often do not; the player then
-  estimates the word inside the sentence and says so. Without any voice the book opens in silent
-  reading mode.
-
-## Using the player
-
-- **Open a book:** click a sample, or drop an EPUB (without DRM), TXT or Markdown file on the start
-  page or choose one. TXT and Markdown files (and EPUBs without a language) ask for the language.
-  Imported books stay in the browser (IndexedDB) with their reading position and bookmarks.
-- **Read:** click any word to continue from there. The timeline jumps to any point.
-- **Views:** stage and text, stage with subtitles (cinema), sentence by sentence (the current
-  sentence large, its neighbours dimmed), full page, or text only. Subtitles can also be switched
-  on in the stage-and-text view (<kbd>S</kbd>). Themes light, sepia, dark or system; four
-  reading fonts; size, line height, line length, margins, spacing, alignment, highlight style,
-  dimming, motion, voice, tempo (0.75×–2.5×) and footnote reading in the settings.
-- **Keys:** <kbd>Space</kbd> play/pause · <kbd>←</kbd>/<kbd>→</kbd> sentence ·
-  <kbd>Shift</kbd>+<kbd>←</kbd>/<kbd>→</kbd> section · <kbd>↑</kbd>/<kbd>↓</kbd> or
-  <kbd>K</kbd>/<kbd>J</kbd> paragraph · <kbd>[</kbd>/<kbd>]</kbd> or <kbd>-</kbd>/<kbd>+</kbd> tempo ·
-  <kbd>V</kbd> visual of the section · <kbd>T</kbd> text only · <kbd>S</kbd> subtitles · <kbd>M</kbd> contents ·
-  <kbd>B</kbd> bookmark · <kbd>D</kbd> debug overlay · <kbd>R</kbd> regenerate the visual (AI) ·
-  <kbd>?</kbd> help · <kbd>Esc</kbd> close.
-- The interface is available in German and English.
-
-### Settings and storage
-
-Settings has five task groups:
-
-- **Adjust narration:** voice, speed and volume.
-- **Make text readable:** fonts, colors and highlighting.
-- **Set up the stage:** layout, pictures, animation and subtitles.
-- **Connect AI:** providers, models and connection settings.
-- **Manage storage & app:** caches, language and reset controls.
-
-Reading and appearance changes apply at once. Voice search and advanced controls open on demand.
-The speaker button beside the playback controls opens the volume slider.
-
-The header shows separate speech and stage status. Each status includes the selected voice or visual preference.
-The status buttons open the matching task group. Provider details appear under **Connect AI**.
-Provider edits stay in a draft until you choose **Save & connect**.
-Connection selection offers automatic detection, server only, or browser only.
-Automatic detection prefers the server. Browser provider settings are then a fallback.
-
-Storage shows the generated cache size for the active connection across all books.
-The stage cache contains plans, pictures, animations and book styles.
-The speech cache contains generated audio and word timings.
-Clearing either cache preserves books, reading positions, bookmarks and settings.
-
-- **Stage cache:** clearing pauses AI planning. Choose **Restart AI planning** to create new visuals.
-- **Speech cache:** clearing pauses speech. Press Play to fill the audio buffer again.
-
-Changing connections also changes the cache location shown in Storage.
-
-### Word-by-word reading (RSVP)
-
-RSVP shows one word at a time. A red focus letter stays on a fixed axis.
-
-1. Choose **Word by word (RSVP)** in the view selector or **Set up the stage**.
-2. For silent reading, enable the RSVP no-sound option under **Set up the stage**.
-3. Set the pace from 150 to 900 words per minute.
-4. Press <kbd>Space</kbd> to start or pause.
-
-Long words and punctuation add brief pauses. With speech enabled, the word follows the voice.
-The subtitle setting also offers **Single word (RSVP)** for the stage and cinema views.
-RSVP preserves signs, currency symbols and standalone operators.
-Silent RSVP does not generate speech or show a speech-based remaining-time estimate.
-
-Use the stage selector in the header or **Set up the stage** to choose mixed visuals, images only, or animations/diagrams.
-This choice applies to new AI plans. Diagrams and text visuals remain available.
-Stage generation pauses in layouts without a stage. When you return, finished visuals remain available.
-
-### Text over the stage
-
-Choose **Text over the stage** for only the current sentence over a full-width stage.
-The sentence uses your configured reading font size. Other sentences and margin tracks are hidden.
-The image blurs only behind the sentence. Light letters use a dark outline and a short, sharp shadow.
-Word highlighting uses color and a thin underline. Long sentences can scroll inside their text box.
-Under **Set up the stage**, turn off **Gently zoom and pan images** to keep images still.
-This applies immediately and does not change the motion setting for other animations.
-
-The **Zen mode** button expands the reading area to fill the window and hides the header and footer.
-Move the pointer near the top or bottom edge to reveal controls without resizing the stage.
-On touch devices, tap the reading area to show or hide controls. Press <kbd>Esc</kbd> or use the Zen button to exit.
-Entering browser fullscreen also starts Zen; leaving fullscreen exits it.
-The Fullscreen API and fullscreen display mode provide events. F11 uses a desktop screen/window-size fallback because browsers do not expose a standard F11 event.
-
-Set **Subtitle font size** under **Set up the stage** to adjust line or single-word subtitles from 14 to 48 px.
-The sentence-over-stage view keeps the normal reading font size.
-
-### Image generation speed
-
-Under **Set up the stage → Generate images**, choose **Fast**, **Balanced**, **High quality**, or the provider default.
-Fast requests lower detail, which can reduce generation time. Image-use, Codex and compatible OpenAI image models receive this quality request.
-ChatGPT/Codex may override it. OpenRouter quality depends on the selected model.
-
-The **Image resolution** setting also offers **Compact** and **Square**.
-Compact requests 1024×688 landscape images or 832×832 square images. Landscape images use about 55% fewer pixels than the standard 1536×1024 request.
-Compact needs a model with custom dimensions. For models with fixed sizes, choose Square (1024×1024).
-Codex may override requested sizes. The OpenRouter chat adapter requests its model-dependent 1K tier for smaller sizes.
-Smaller requests can reduce generation time; these options do not resize a finished image.
-
-Turn off **Send the first book image as a style reference** to skip reference-image uploads.
-The illustration style text still applies. Reference support depends on the provider.
-These settings apply to new requests. Finished images remain available; press <kbd>R</kbd> to regenerate the current image.
-The cache keeps separate results for each quality, resolution and reference setting.
-
-### Image intervals and 2×2 batches
-
-Under **Set up the stage → Generate images**, choose an image per section, paragraph, sentence, or estimated reading-time interval.
-Timed intervals use the book's estimated 1× timeline and change at sentence boundaries.
-These choices switch to **Images only**. Fixed image sequences use the book passage directly as the scene prompt, without per-section text-model planning or chapter image budgets.
-**Automatic** keeps the existing AI-selected visuals and budgets. Switching to mixed visuals or animations pauses the configured image sequence.
-
-**Generate four scenes together (2×2)** sends four successive scenes in one image request.
-The server crops the returned image into four PNG files using its actual dimensions. Browser-only providers use canvas cropping.
-Tiles are cached and displayed separately in reading order. Future tiles do not appear early; the last ready image stays visible while the next one is pending.
-Sentence images start on opening the book. Normal playback keeps unfinished requests and queues new sentences ahead.
-Passed sentences remain queued for completion after the current lookahead. An explicit seek cancels obsolete requests after a 1.5-second dwell.
-Failed requests retry after two minutes, including while playback is paused.
-The last batch of a chapter repeats unused prompts to fill the grid. Only the required tiles enter the reading sequence.
-
-Each tile has half the sheet's width and height. At standard landscape resolution, that is 768×512 per tile.
-Batching reduces request count, not necessarily total latency by a factor of four. Scene separation depends on the image model following the grid prompt.
-Press <kbd>R</kbd> to regenerate the current batch. Changing interval or batch settings starts a new sequence; matching cached results remain reusable.
-
-### Generation concurrency
-
-- Speech and stage jobs use independent queues. Stage work does not reserve TTS slots.
-- Automatic stage planning uses two slots for style, plans and animation code. Images use a separate queue with four slots by default.
-- **Parallel image requests** under **Set up the stage → Generate images** adjusts the image queue from one to four slots. The setting also applies to fixed image sequences. If you reduce the limit, running requests finish. Finished images stay available.
-- Fixed image sequences skip per-scene LLM planning. They prepare up to five estimated reading minutes. The queue holds at most 24 batches ahead plus the preceding batch.
-- Each image provider allows four active requests: image-use, Codex images, OpenAI-compatible images and OpenRouter images. Provider limits apply across all reader sessions.
-- Four concurrent 2×2 batches cover up to 16 scenes at once.
-- The local QwenTTS configuration uses four parallel requests. Its server must also allow a batch of four.
-- A provider chain is a fallback order, not a worker pool: image-use and Codex do not produce the same request in parallel.
-
-Concurrency tests hold four image requests open while planning and four TTS requests continue.
-A provider test checks that four image-use jobs get separate output folders. A fifth job waits for a free slot.
-These tests use mocked providers. They do not measure real image-service latency.
-
-### Generation progress
-
-The timeline and text margins show separate stage and speech tracks.
-Image sequences keep one stage segment per sentence. Each segment shows its own status, including images that finish out of order.
-Stage colors identify pictures, animations, diagrams, quotes, key terms and book figures.
-The legend names the visible types. Filled sections are ready. Dashed sections are working. Faint sections are queued.
-
-The rate below the tracks compares generation with the current reading speed.
-A value of 1× matches that speed. The average uses up to 24 completed generations and excludes full cache hits.
-Stage estimates include planning and media generation. After four audio clips, the stage estimate adjusts to the selected voice.
-
-## Server voices (optional)
-
-Besides the browser's voices the player can read with server-side TTS: a local
-[qwentts.cpp](https://github.com/ServeurpersoCom/qwentts.cpp) `tts-server` (Qwen3-TTS, German and
-English among others), OpenAI's speech endpoint, or any OpenAI-compatible `/v1/audio/speech`.
-
-- Configure it in `lesebuehne.config.local.ts`, e.g.
-  `tts: [{ id: 'qwentts', kind: 'qwentts', baseURL: 'http://127.0.0.1:8080/v1', voices: ['vivian'] }]`,
-  or with `TTS_BASE_URL`, `TTS_VOICES` (comma-separated) and `TTS_KIND` (`qwentts`, `openai`,
-  `openai-compatible`; plus `TTS_API_KEY`, `TTS_MODEL`, `TTS_CONCURRENCY`).
-- Qwen3-TTS can process requests in batches. Match `concurrency` or `TTS_CONCURRENCY` to the server's `--max-batch` setting.
-  Four requests can improve throughput on a compatible GPU. The generation-rate indicator shows whether the provider keeps up.
-- Server voices appear under **Adjust narration**. If you have not chosen a voice, the player prefers a server voice.
-  The player requests up to two minutes of speech ahead. It limits the window to 120 chunks.
-  The server caches audio on disk. The chip beside the remaining time shows the ready audio buffer.
-- These engines report no word times, so the player aligns each sentence itself (speech
-  start/end and pauses from the audio, matched to punctuation, syllable-weighted in between).
-  Tempo keeps the pitch.
-- If the server voice fails, the sentence is read by a browser voice instead and the chip says so.
-
-Generated speech uses fixed chunks. Pause, word jumps and tempo changes reuse cached chunks at the requested word.
-The player reads each provider's parallel-request limit from its status.
-List each reference voice with its supported book languages:
-
-```ts
-{ id: 'narrator-m60-s99', name: 'S99 Deutsch', languages: ['de'] },
-{ id: 'narrator-m60-s99-en', name: 'S99 English', languages: ['en'] },
-```
-
-This example needs both reference voices registered with QwenTTS.
-QwenTTS receives the book language with each speech request. Reference files and local voice settings are not part of this repository.
-
-## AI director (optional)
-
-Without any AI the player uses its heuristic director (lists, enumerations, key terms). With an AI
-provider, an LLM director plans each section's visual: diagrams, animations, illustrations,
-verbatim quotes or key terms. Per book it first writes a **Style Bible**: palette, illustration and diagram style, and a
-glossary of central concepts with glyphs and colours that the stage uses consistently.
-
-- The heuristic plan is shown at once; the LLM plan replaces it with a crossfade when it arrives.
-  Plans are prefetched about five minutes of listening ahead and cached; a jump cancels work that
-  is no longer needed. <kbd>R</kbd> makes a new variant; the debug overlay (<kbd>D</kbd>) switches
-  between variants and shows provider, model, prompt version and dropped cues.
-- **Diagrams:** twelve templates (list, process, causal chain, timeline, cycle, spectrum,
-  comparison, hierarchy, 2×2 matrix, Venn, network, equation/mirror), laid out by the player (the
-  LLM only gives the structure), revealed, highlighted, connected and dimmed in sync with the words.
-- **Animations:** for ideas that need motion (a pendulum, a flow, a transformation) the LLM writes a
-  small program against the player's animation library. It runs in a locked-down iframe (opaque
-  origin, no network, no storage) as a pure function of reading time, so seeking works. Programs
-  are checked before they run; if one fails, the diagram stays and one corrected version is
-  requested. <kbd>R</kbd> on an animated section writes a new program.
-- **Illustrations:** for concrete scenes the director describes a picture in the book's
-  illustration style with named focus regions. The server generates it (about one to two minutes)
-  through the `image-use` CLI or, as fallback, the ChatGPT Codex backend's image tool with the
-  codex-auth sign-in, or any OpenAI-compatible images endpoint; the book's first picture is the
-  style reference of the following ones. Images are prefetched with the plans, cached, and shown
-  with a calm Ken Burns camera that moves to each region when the text mentions it. Until a
-  picture is there, a placeholder in the book's colours shows the key terms. <kbd>R</kbd> paints a
-  new variant.
-- Every phrase the director anchors to is checked against the book text. Anything not verbatim is
-  dropped; the text itself is never changed.
-- Status: the small indicator in the top bar (heuristic / AI / working / limited). Details,
-  providers and usage: Settings → Connect AI.
-
-### Where the AI runs
-
-1. **Local server** (recommended): `bun run dev` (development) or `bun run build && bun run server`
-   (local full mode) serve the player and the API on `127.0.0.1`. Keys and tokens stay on the
-   server. `bun run doctor` lists every provider and why it is or is not available.
-2. **Browser only** (static hosting): Settings → Connect AI → own keys for OpenRouter, an
-   OpenAI-compatible or an Anthropic-compatible endpoint for plans and animations; an OpenRouter
-   image model or an OpenAI-compatible images endpoint for illustrations; an OpenAI-compatible
-   speech endpoint for voices. Keys are stored only in that browser's localStorage, requests go
-   straight from the browser to the provider, and pictures and audio are cached in IndexedDB.
-3. **Nothing configured:** heuristic director. Reading never waits for the AI.
-
-### Server providers
-
-The server tries the providers in the order of `llm.chain` and falls back to the next one, finally to
-the heuristic. Providers that are rate-limited or fail repeatedly cool down for a while.
-
-| Provider | Needs | Notes |
+| Mode | Start | What you get |
 |---|---|---|
-| `codex-auth` | A ChatGPT sign-in from OpenCode or the Codex CLI on this machine, or an own sign-in (Settings → Sign in) | Uses the ChatGPT Codex backend like OpenCode does. Other apps' tokens are only read, never refreshed. Model `auto` = first model the backend lists. |
-| `chatgpt-plan` | Settings → Sign in (official "Sign in with ChatGPT") | Tokens stored owner-only in the data directory. |
-| `openrouter` | `OPENROUTER_API_KEY` and a model (`OPENROUTER_MODEL` or config) | Optional daily call cap (`maxCallsPerDay`). |
-| images: `image-use`, `codex-image` | The `image-use` CLI (`IMAGE_USE_DIR`, default `~/.local/share/image-use`), else the Codex sign-in above | `images` in the config; also `openrouter` (an image model, the OpenRouter key) and `openai-compatible` image endpoints with `baseURL`/`apiKey`/`model`. The CLI is started without a shell. |
-| `anthropic-compatible` | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (optional `ANTHROPIC_BASE_URL`) | JSON through a forced tool call. |
-| `openai-compatible` | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_MODEL` (optional `OPENAI_COMPAT_API_KEY`) or entries in config | Covers OpenAI, Ollama (`http://127.0.0.1:11434/v1`), LM Studio and others. |
+| Static site | `bun run build`, then host `dist/` | Reading, browser voices, simple diagrams. With your own API keys in the browser: AI visuals, images and voices. |
+| Local server | `bun run build && bun run server` | Everything. Keys and sign-in tokens stay on your computer. |
+| Development | `bun run dev` | The local server with live reload. |
 
-Configuration: `lesebuehne.config.ts` holds the committed defaults (no keys). Put your own settings
-in `lesebuehne.config.local.ts` (same shape, gitignored), for example:
+The servers listen on `127.0.0.1` only. A hosted copy of the player can also use your local
+server. Start the server with `LESEBUEHNE_ORIGINS=https://your-name.github.io bun run server` and
+enter `http://127.0.0.1:8787` under **Settings → Connect AI**.
+
+The workflow in `.github/workflows/pages.yml` tests, builds and publishes the player to GitHub Pages
+on every push to `main`. To turn it on, set **Settings → Pages → Source** to **GitHub Actions**.
+
+## AI setup (optional)
+
+Put your settings in `lesebuehne.config.local.ts`. Git ignores this file. It has the same shape as
+[`lesebuehne.config.ts`](lesebuehne.config.ts). Put keys in environment variables, not in files.
 
 ```ts
 import { defineConfig } from '@lesebuehne/server';
 
 export default defineConfig({
   llm: { chain: ['codex-auth', 'openrouter'] },
-  providers: { 'codex-auth': { model: 'auto', models: { plan: 'a-faster-model' } } },
+  providers: {
+    tts: [{ id: 'qwentts', kind: 'qwentts', baseURL: 'http://127.0.0.1:8080/v1', voices: ['vivian'], concurrency: 4 }],
+  },
 });
 ```
 
-Keys belong in environment variables. Other variables: `LESEBUEHNE_PORT` (server port, default
-8787), `LESEBUEHNE_DATA_DIR` (cache, uploaded books, own sign-ins; default the platform's user data
-directory), `LESEBUEHNE_LLM_CHAIN` (comma-separated chain), `LESEBUEHNE_ORIGINS` (hosted player
-pages allowed to use the server, comma-separated).
+Run `bun run doctor` to see which providers are ready, and why the others are not.
+
+| Purpose | Providers | Needs |
+|---|---|---|
+| Text model (plans, style, animations) | `codex-auth`, `chatgpt-plan` | A ChatGPT sign-in (OpenCode, Codex CLI, or **Settings → Sign in**) |
+| | `openrouter` | `OPENROUTER_API_KEY`, `OPENROUTER_MODEL` |
+| | `openai-compatible` | `OPENAI_COMPAT_BASE_URL`, `OPENAI_COMPAT_MODEL`. This covers OpenAI, Ollama and LM Studio. |
+| | `anthropic-compatible` | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` |
+| Images | `image-use`, `codex-image` | The `image-use` CLI, or the ChatGPT sign-in |
+| | `openrouter`, `openai-compatible` | An image model and its key |
+| Voices | `qwentts`, `openai`, `openai-compatible` | `TTS_BASE_URL` and `TTS_VOICES`, or a `tts` entry in the config |
+
+The server tries the text models in the order of `llm.chain`. If all of them fail, the player uses
+its built-in diagrams. Reading never waits for the AI.
+
+### Server voices
+
+Server voices stream. Playback starts while the server still generates the sentence. The player
+measures how fast the audio arrives. It starts as soon as the rest will arrive in time, so the
+voice does not stop in the middle of a sentence. Qwen3-TTS and OpenAI stream by default.
+
+These engines give no word times. The player finds them from the audio itself (pauses, punctuation
+and syllables). Audio and word times are cached on disk.
+
+For Qwen3-TTS, set `concurrency` to the `--max-batch` value of `tts-server`. The rate shown under
+the timeline tells you if the voice keeps up with your tempo.
 
 ## Commands
 
-Run all commands from the repository root.
-
 | Command | What it does |
 |---|---|
-| `bun install` | Installs the pinned dependencies from `bun.lock`. |
-| `bun run samples` | Downloads the public-domain sources and writes the sample texts to `samples/`. |
-| `bun run dev` | Starts the development server with the AI API on `127.0.0.1` and prints the URL. Option: `-- --port <n>`. |
-| `bun test` | Runs all tests. Tests need no network and no speech voices. |
-| `bun run typecheck` | Type-checks the whole workspace (`tsc`, strict). |
-| `bun run build` | Writes the static player, the sample files and the font licences to `dist/`. |
-| `bun run preview` | Serves `dist/` on `127.0.0.1` and prints the URL. Options: `-- --port <n> --base <path> --dir <path>`. |
-| `bun run server` | Serves `dist/` and the AI API on `127.0.0.1` (local full mode). Options: `-- --port <n> --dir <path>`. |
-| `bun run doctor` | Prints every AI provider's availability and configuration problems (never secrets). |
-| `bun run fixtures` | Writes test books (EPUB 2/3, footnotes, figures, French, DRM, font obfuscation, Markdown) to `out/fixtures/` for trying the import by hand. |
-
-Example for a sub-path: `bun run preview -- --base /sub/` serves the build under `http://127.0.0.1:4173/sub/`.
-In Git Bash, write `--base sub` (Git Bash rewrites `/sub/` to a Windows path) or set `MSYS_NO_PATHCONV=1`.
-
-## Online (static site)
-
-The player works without the local server as a static site: `bun run build` writes `dist/`, and
-its content runs on any static HTTP server, also under a sub-path (all URLs are relative). Fonts
-are self-hosted; the player contacts third-party servers only for the AI providers you configure.
-
-- **GitHub Pages:** `.github/workflows/pages.yml` type-checks, tests and builds on every push to
-  `main` and publishes `dist/`. Enable it once under Settings → Pages → Source: GitHub Actions.
-- **Installable and offline:** the build adds a web app manifest, icons and a service worker. After
-  the first visit the player, its fonts and the samples load without a network; books stay in the
-  browser's storage. A new version is announced with a short notice. The worker never caches API
-  or provider requests. It runs only on `https:` or loopback.
-- **What works without a server:** reading, highlighting, browser voices, import, library, the
-  heuristic director with diagrams. With own keys (Settings → Connect AI → "In this browser"):
-  LLM plans, Style Bible, animations, illustrations and AI voices. Only the ChatGPT subscription
-  routes (`codex-auth`, `chatgpt-plan`, `image-use`) need the local server, because their
-  tokens must not reach a browser. The start page says so on first use.
-- **Hosted page with a local server:** start the server with the page's origin allowed, e.g.
-  `LESEBUEHNE_ORIGINS=https://name.github.io bun run server` (or `server.origins` in the
-  config), and enter `http://127.0.0.1:8787` under Settings → Connect AI → Server address. The
-  server answers the browser's Private Network Access checks for allowed origins only;
-  `bun run doctor` lists them.
-- **A local qwentts from the browser:** `tts-server` sends CORS headers, so the voice settings
-  can talk to it directly (preset qwentts, base URL `http://127.0.0.1:8080/v1`, parallel requests
-  as its `--max-batch`).
-- Open the player over HTTP. `file://` (double-click on `index.html`) is not supported.
-- The servers bind only to `127.0.0.1`. The AI API accepts only loopback hosts and the same
-  origin (plus the allowed origins above).
+| `bun run dev` | Starts the player and the AI server for development (`-- --port <n>`). |
+| `bun test` | Runs all tests. The tests need no network and no voices. |
+| `bun run typecheck` | Type-checks the workspace. |
+| `bun run build` | Writes the static player to `dist/`. |
+| `bun run preview` | Serves `dist/` (`-- --port <n> --base <path>`). |
+| `bun run server` | Serves `dist/` and the AI server (`-- --port <n>`). |
+| `bun run doctor` | Shows the state of every AI provider. It never prints secrets. |
+| `bun run samples` | Downloads the sample texts and checks their SHA-256 hashes. |
+| `bun run fixtures` | Writes test books (EPUB, footnotes, DRM, Markdown) to `out/fixtures/`. |
 
 ## Repository layout
 
 | Path | Content |
 |---|---|
-| `packages/core` | Book model, IDs, whitespace normalisation, sentence segmentation, speech normalisation, time axis, schemas |
-| `packages/ingest` | TXT, Markdown and EPUB import |
-| `packages/director` | Heuristic and LLM director (Style Bible, section plans, verbatim checks, cache and variants) |
-| `packages/providers/*` | LLM providers (`codex-auth` incl. Codex images, `chatgpt-plan`, `openai-compatible`, `openrouter`, `anthropic-compatible`), TTS (`tts-openai-compatible`) and images (`image-use`, `image-openai-compatible`) |
-| `packages/server` | Local API (`127.0.0.1`): configuration, provider chains, disk cache, sign-in, TTS with alignment, images |
-| `packages/renderers` | Visual state as a pure function of time, stage scheduling, diagram layout engine, animation sandbox, components |
-| `packages/player` | Browser player (Preact): engine, storage, settings, UI |
-| `samples/` | Generated by `bun run samples` (not committed; catalog in `scripts/samples.catalog.json`) |
-| `lesebuehne.config.ts` | Server defaults (no personal data, no keys) |
-| `scripts/` | `dev`, `build`, `preview`, `server`, `doctor`, `samples` and `fixtures` scripts |
-| `tests/` | Workspace tests and shared test support |
+| `packages/core` | Book model, sentence segmentation, speech text, timeline, audio alignment |
+| `packages/ingest` | EPUB, TXT and Markdown import |
+| `packages/director` | Built-in and LLM director, style, images and speech |
+| `packages/renderers` | Stage, diagram layout and animation sandbox |
+| `packages/player` | The browser player (Preact) |
+| `packages/server` | Local AI server |
+| `packages/providers/*` | Adapters for text models, images and voices |
 
-## Fonts
+## Copyright and privacy
 
-Literata, Source Sans 3, Atkinson Hyperlegible Next and OpenDyslexic, all under the SIL Open Font
-License 1.1 (via Fontsource). The build copies each licence to `dist/licenses/fonts/`.
+- Use Lesebühne only with books that you are allowed to read. Do not publish generated audio or
+  images of copyrighted books.
+- Lesebühne does not remove DRM. It rejects protected EPUB files.
+- The player sends text only to the AI providers that you configure.
+
+## License
+
+The code is under the [MIT License](LICENSE). The fonts (Literata, Source Sans 3, Atkinson
+Hyperlegible Next and OpenDyslexic) are under the SIL Open Font License 1.1. The build copies each
+font license to `dist/licenses/fonts/`.
