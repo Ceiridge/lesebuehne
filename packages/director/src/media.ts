@@ -275,15 +275,25 @@ export class SpeechDirector {
 
   constructor(private readonly registry: ProviderRegistry, private readonly store: MediaStore, private readonly o: { stream?: boolean } = {}) {}
 
-  private async read(key: string): Promise<Omit<SpeechOutcome, 'cached'> | undefined> {
+  private async read(key: string, text: string, lang: string): Promise<Omit<SpeechOutcome, 'cached'> | undefined> {
     const [audio, meta] = await Promise.all([this.store.get(`${key}.wav`), this.store.get(`${key}.json`)]);
     if (!audio || !meta) return undefined;
+    let m: { words: WordTiming[]; providerId: string; aligner?: string };
     try {
-      const m = JSON.parse(new TextDecoder().decode(meta)) as { words: WordTiming[]; providerId: string };
-      return { audio, words: m.words, providerId: m.providerId };
+      m = JSON.parse(new TextDecoder().decode(meta)) as typeof m;
     } catch {
       return undefined;
     }
+    // Timings from an older aligner (no version: the first one) are recomputed from the audio.
+    if ((m.aligner ?? 'energy-1') !== ALIGNER_VERSION) {
+      try {
+        m = { ...m, words: alignWords(decodeWav(audio), text, lang), aligner: ALIGNER_VERSION };
+        await this.store.put(`${key}.json`, new TextEncoder().encode(JSON.stringify(m))).catch(() => undefined);
+      } catch {
+        // Undecodable audio keeps its old timings.
+      }
+    }
+    return { audio, words: m.words, providerId: m.providerId };
   }
 
   private resolve(text: string, lang: string, voice: string): { key: string; providerId: string; voiceId: string } {
@@ -291,7 +301,8 @@ export class SpeechDirector {
     const providerId = voice.slice(0, sep);
     const voiceId = voice.slice(sep + 1);
     if (sep <= 0 || !voiceId || !this.registry.get(providerId, 'tts')) throw new Error(`unknown voice ${voice}`);
-    return { key: cacheKey('tts', { provider: providerId, voice: voiceId, lang, text: contentHash(text), aligner: ALIGNER_VERSION }), providerId, voiceId };
+    // The audio key keeps the first aligner's name, so a new aligner reuses the audio.
+    return { key: cacheKey('tts', { provider: providerId, voice: voiceId, lang, text: contentHash(text), aligner: 'energy-1' }), providerId, voiceId };
   }
 
   private flight(key: string, providerId: string, voiceId: string, text: string, lang: string, signal: AbortSignal): SpeechFlight {
@@ -322,7 +333,7 @@ export class SpeechDirector {
       }, shared.signal);
       const words = r.value.words ?? alignWords(decodeWav(r.value.audio), text, lang);
       // Timings first: a clip without them is never read back.
-      await this.store.put(`${key}.json`, new TextEncoder().encode(JSON.stringify({ words, providerId: r.providerId })));
+      await this.store.put(`${key}.json`, new TextEncoder().encode(JSON.stringify({ words, providerId: r.providerId, aligner: ALIGNER_VERSION })));
       await this.store.put(`${key}.wav`, r.value.audio);
       return { audio: r.value.audio, words, providerId: r.providerId, cached: false };
     })().finally(() => {
@@ -337,7 +348,7 @@ export class SpeechDirector {
 
   async speak(text: string, lang: string, voice: string, signal: AbortSignal): Promise<SpeechOutcome> {
     const { key, providerId, voiceId } = this.resolve(text, lang, voice);
-    const hit = await this.read(key);
+    const hit = await this.read(key, text, lang);
     if (hit) return { ...hit, cached: true };
     return until(this.flight(key, providerId, voiceId, text, lang, signal).promise, signal);
   }
@@ -348,7 +359,7 @@ export class SpeechDirector {
    */
   async stream(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ done: SpeechOutcome } | { live: LiveSpeech; finished: Promise<SpeechOutcome> }> {
     const { key, providerId, voiceId } = this.resolve(text, lang, voice);
-    const hit = await this.read(key);
+    const hit = await this.read(key, text, lang);
     if (hit) return { done: { ...hit, cached: true } };
     const f = this.flight(key, providerId, voiceId, text, lang, signal);
     const live = await until(f.live, signal);

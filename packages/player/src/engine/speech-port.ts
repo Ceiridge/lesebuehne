@@ -15,6 +15,8 @@ export interface UtteranceRequest {
   onBoundary(charIndex: number, name: string): void;
   onEnd(): void;
   onError(error: string): void;
+  /** Playback was paused from outside (media keys, headset, the OS). */
+  onInterrupted?(): void;
 }
 
 /** What the engine needs from a TTS (Web Speech in the browser, a fake in tests, B12). */
@@ -22,6 +24,8 @@ export interface SpeechPort {
   speak(request: UtteranceRequest): void;
   cancel(): void;
   setVolume?(volume: number): void;
+  /** Waiting for audio that is still being generated (not stuck). */
+  busy?(): boolean;
 }
 
 /** The parts of the Web Speech API the adapter uses. */

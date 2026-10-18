@@ -82,7 +82,7 @@ describe('09-2: word estimator and calibration', () => {
     const { tts, engine, timers } = setup();
     engine.play();
     tts.last.onStart();
-    timers.advance(100_000);
+    timers.advance(10_000);
     engine.frame(timers.now());
     expect(engine.position.value.entryIndex).toBe(0);
     tts.last.onEnd();
@@ -270,6 +270,27 @@ describe('09-7: watchdog', () => {
     expect(tts.spoken.length).toBe(2);
     expect(engine.position.value.tokenIndex).toBeGreaterThan(0);
     expect(tts.last.text.length).toBeLessThan(first.text.length);
+  });
+
+  test('waits while audio is generated; a restart stuck at the same word moves on; outside pauses pause', () => {
+    const { tts, engine, timers } = setup();
+    let busy = true;
+    Object.assign(tts, { busy: () => busy });
+    engine.play();
+    timers.advance(3 * WATCHDOG_MIN_MS);
+    expect(tts.spoken.length).toBe(1); // still generating: no restart
+    busy = false;
+    timers.advance(WATCHDOG_MIN_MS);
+    expect(tts.spoken.length).toBe(2); // restart at the same word
+    expect(engine.position.value).toEqual({ entryIndex: 0, tokenIndex: 0 });
+    timers.advance(WATCHDOG_MIN_MS);
+    expect(engine.position.value.entryIndex).toBe(0);
+    expect(tts.spoken.length).toBe(3);
+    tts.last.onStart();
+    expect(engine.position.value.entryIndex).toBe(1); // stuck twice at the same word: next sentence
+    expect(engine.playing.value).toBe(true);
+    tts.last.onInterrupted?.();
+    expect(engine.playing.value).toBe(false);
   });
 });
 

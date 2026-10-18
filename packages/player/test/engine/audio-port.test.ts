@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { TtsBuffer, ttsStatus } from '../../src/ai/tts.ts';
-import { AudioSpeechPort, RoutingSpeechPort, type AudioLike, type Ticker, type TtsSource } from '../../src/engine/audio-port.ts';
+import { AudioSpeechPort, RoutingSpeechPort, STALL_MS, type AudioLike, type Ticker, type TtsSource } from '../../src/engine/audio-port.ts';
 import type { SpeechPort, UtteranceRequest } from '../../src/engine/speech-port.ts';
 
 class FakeAudio implements AudioLike {
@@ -12,6 +12,7 @@ class FakeAudio implements AudioLike {
   onplaying: (() => void) | null = null;
   onended: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onpause: (() => void) | null = null;
   async play(): Promise<void> {
     this.paused = false;
     queueMicrotask(() => this.onplaying?.());
@@ -158,6 +159,115 @@ describe('M4: audio speech port', () => {
     port.speak(request({ startOffset: 5 }).r);
     await flush();
     expect(audio.src).toBe('blob:x');
+  });
+
+  test('stall watch: a clip stuck at its end counts as ended; stuck elsewhere it is nudged once, then fails', async () => {
+    let now = 0;
+    const audio = Object.assign(new FakeAudio(), { duration: 1.3 });
+    const ticker = new FakeTicker();
+    const port = new AudioSpeechPort({ source: () => source(), createAudio: () => audio, ticker, now: () => now });
+    const { r, events } = request();
+    port.speak(r);
+    await flush();
+    audio.currentTime = 1.1;
+    ticker.tick();
+    now = STALL_MS - 1;
+    ticker.tick();
+    expect(events.at(-1)).toBe('word@10');
+    now = STALL_MS + 1;
+    ticker.tick();
+    expect(events.at(-1)).toBe('end');
+
+    const second = Object.assign(new FakeAudio(), { duration: 5 });
+    let plays = 0;
+    const play = second.play.bind(second);
+    second.play = () => (plays++, play());
+    const port2 = new AudioSpeechPort({ source: () => source(), createAudio: () => second, ticker, now: () => now });
+    const run = request();
+    port2.speak(run.r);
+    await flush();
+    second.currentTime = 0.5;
+    ticker.tick();
+    now += STALL_MS + 1;
+    ticker.tick();
+    expect(plays).toBe(2); // nudged
+    now += STALL_MS + 1;
+    ticker.tick();
+    expect(run.events.at(-1)).toBe('error:stall');
+  });
+
+  test('a stream that breaks off or stalls continues from the finished clip at the same moment', async () => {
+    let now = 0;
+    const audio = new FakeAudio();
+    const ticker = new FakeTicker();
+    let deliver!: (c: { url: string; words: typeof words }) => void;
+    const src: TtsSource = { clip: () => new Promise((r) => (deliver = r)), live: () => ({ url: 'stream', seconds: 2 }) };
+    const port = new AudioSpeechPort({ source: () => src, createAudio: () => audio, ticker, now: () => now });
+    port.speak(request().r);
+    await flush();
+    audio.currentTime = 0.6;
+    ticker.tick();
+    now = 10_000;
+    ticker.tick();
+    expect(port.busy()).toBe(true); // waiting for generation, not stuck
+    deliver({ url: 'blob:x', words });
+    await flush();
+    now = 20_000;
+    ticker.tick();
+    expect(audio).toMatchObject({ src: 'blob:x', currentTime: 0.6, paused: false });
+
+    const broken = new FakeAudio();
+    let ready!: (c: { url: string; words: typeof words }) => void;
+    const port2 = new AudioSpeechPort({
+      source: () => ({ clip: () => new Promise((r) => (ready = r)), live: () => ({ url: 'stream', seconds: 2 }) }),
+      createAudio: () => broken, ticker, now: () => now,
+    });
+    const { r, events } = request();
+    port2.speak(r);
+    await flush();
+    broken.currentTime = 0.3;
+    broken.onerror?.();
+    expect(events).toEqual(['start']);
+    ready({ url: 'blob:y', words });
+    await flush();
+    expect(broken).toMatchObject({ src: 'blob:y', currentTime: 0.3 });
+
+    // A dropped connection looks like the end of a stream of unknown length.
+    const cut = new FakeAudio();
+    const port3 = new AudioSpeechPort({
+      source: () => ({ clip: async () => ({ url: 'blob:z', words }), live: () => ({ url: 'stream', seconds: 2 }) }),
+      createAudio: () => cut, ticker, now: () => now,
+    });
+    const third = request();
+    port3.speak(third.r);
+    await flush();
+    cut.currentTime = 0.5;
+    cut.onended?.();
+    expect(cut).toMatchObject({ src: 'blob:z', currentTime: 0.5 });
+    expect(third.events).not.toContain('end');
+    cut.currentTime = 1.25;
+    cut.onended?.();
+    expect(third.events.at(-1)).toBe('end');
+  });
+
+  test('a pause from outside interrupts; the pause right before `ended` does not', async () => {
+    const audio = new FakeAudio();
+    const port = new AudioSpeechPort({ source: () => source(), createAudio: () => audio, ticker: new FakeTicker() });
+    const { r, events } = request({ onInterrupted: () => events.push('interrupted') });
+    port.speak(r);
+    await flush();
+    audio.paused = true;
+    audio.onpause?.();
+    audio.onended?.();
+    await new Promise((res) => setTimeout(res, 350));
+    expect(events).toEqual(['start', 'word@0', 'word@5', 'word@10', 'end']);
+
+    port.speak(r);
+    await flush();
+    audio.paused = true;
+    audio.onpause?.();
+    await new Promise((res) => setTimeout(res, 350));
+    expect(events.at(-1)).toBe('interrupted');
   });
 
   test('routing: TTS voices to audio, others to Web Speech; failed TTS falls back to a browser voice', async () => {

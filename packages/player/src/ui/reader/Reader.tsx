@@ -1,4 +1,4 @@
-import { useComputed, useSignal, useSignalEffect } from '@preact/signals';
+import { effect, useComputed, useSignal, useSignalEffect } from '@preact/signals';
 import { useEffect, useRef } from 'preact/hooks';
 import type { ReaderSession } from '../../app/session.ts';
 import { route, settings, toast } from '../../app/store.ts';
@@ -172,6 +172,31 @@ export function Reader({ session }: { session: ReaderSession }) {
   }, [session]);
 
   useEffect(() => () => session.dispose(), [session]);
+
+  // Media keys, headset buttons and the OS media overlay control the reader (not the audio element).
+  useEffect(() => {
+    const media = typeof navigator === 'undefined' ? undefined : navigator.mediaSession;
+    if (!media || typeof MediaMetadata === 'undefined') return;
+    media.metadata = new MediaMetadata({ title: session.book.title, ...(session.book.author ? { artist: session.book.author } : {}) });
+    const handlers: Array<[MediaSessionAction, () => void]> = [
+      ['play', () => !session.isPlaying && dispatch(session, 'toggle-play')],
+      ['pause', () => session.isPlaying && dispatch(session, 'toggle-play')],
+      ['previoustrack', () => dispatch(session, 'prev-sentence')],
+      ['nexttrack', () => dispatch(session, 'next-sentence')],
+    ];
+    for (const [action, fn] of handlers) {
+      try { media.setActionHandler(action, fn); } catch { /* unsupported action */ }
+    }
+    const stop = effect(() => { media.playbackState = session.isPlaying ? 'playing' : 'paused'; });
+    return () => {
+      stop();
+      for (const [action] of handlers) {
+        try { media.setActionHandler(action, null); } catch { /* unsupported action */ }
+      }
+      media.metadata = null;
+      media.playbackState = 'none';
+    };
+  }, [session]);
 
   // One frame clock for every view: advances the estimated word for voices without word
   // boundaries even when no stage is shown (the stage samples the same engine clock).

@@ -270,6 +270,16 @@ describe('M4: /api/tts', () => {
     const r2 = await call(api, 'POST', '/api/tts', body);
     expect(r2.headers.get('x-lb-cached')).toBe('true');
     expect(calls).toBe(1);
+    // Timings from the first aligner are recomputed from the cached audio, not synthesized again.
+    const { readdir, readFile, writeFile } = await import('node:fs/promises');
+    const dir = join(ctx.dataDir, 'cache', 'tts');
+    const meta = join(dir, (await readdir(dir)).find((f) => f.endsWith('.json'))!);
+    expect(JSON.parse(await readFile(meta, 'utf8')).aligner).toBe('energy-2');
+    await writeFile(meta, JSON.stringify({ words: words.map((w) => ({ ...w, t0: 0, t1: 0 })), providerId: 'qwentts' }));
+    const r3 = await call(api, 'POST', '/api/tts', body);
+    expect(JSON.parse(decodeURIComponent(r3.headers.get('x-lb-words')!))).toEqual(words);
+    expect(JSON.parse(await readFile(meta, 'utf8')).aligner).toBe('energy-2');
+    expect(calls).toBe(1);
     expect((await call(api, 'POST', '/api/tts', { ...body, voice: 'nope:x' })).status).toBe(404);
     const caps = (await (await call(api, 'GET', '/api/capabilities')).json()) as { providers: Array<{ id: string; voices?: unknown[] }> };
     expect(caps.providers.find((p) => p.id === 'qwentts')?.voices).toHaveLength(1);

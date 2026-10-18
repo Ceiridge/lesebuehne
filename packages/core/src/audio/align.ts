@@ -2,8 +2,8 @@ import { primaryLanguage } from '../text/segmenters.ts';
 import type { WordTiming } from '../providers/types.ts';
 import type { Pcm } from './wav.ts';
 
-/** Part of TTS cache keys: change when the algorithm changes. */
-export const ALIGNER_VERSION = 'energy-1';
+/** Version of the word timings: cached timings from another version are recomputed from the audio. */
+export const ALIGNER_VERSION = 'energy-2';
 
 const FRAME_SECONDS = 0.01;
 const MIN_PAUSE_SECONDS = 0.09;
@@ -30,18 +30,21 @@ export interface SpeechActivity {
   pauses: Array<{ t0: number; t1: number }>;
 }
 
-/** Speech start/end and inner pauses from frame energy with an adaptive threshold. */
-export function speechActivity(pcm: Pcm): SpeechActivity {
-  const e = frameEnergy(pcm);
-  const sorted = Float32Array.from(e).sort();
+/** Frame energy (lightly smoothed against flicker) and which frames are voiced, by an adaptive threshold. */
+function voicing(pcm: Pcm): { energy: Float32Array; peak: number; voiced: boolean[] } {
+  const raw = frameEnergy(pcm);
+  const energy = raw.map((x, i) => (raw[Math.max(0, i - 1)]! + 2 * x + raw[Math.min(raw.length - 1, i + 1)]!) / 4);
+  const sorted = Float32Array.from(energy).sort();
   const peak = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
   const floor = sorted[Math.floor(sorted.length * 0.1)] ?? 0;
   // The 10th percentile is the noise floor unless the clip is nearly all speech: cap at a share of the peak.
   const threshold = Math.max(Math.min(floor * 2.5, peak * 0.25), peak * 0.06, 1e-4);
-  const voiced = Array.from(e, (x) => x > threshold);
+  return { energy, peak, voiced: Array.from(energy, (x) => x > threshold) };
+}
+
+function activity(voiced: boolean[], total: number, minPause: number): SpeechActivity {
   const first = voiced.indexOf(true);
   const last = voiced.lastIndexOf(true);
-  const total = pcm.samples.length / pcm.sampleRate;
   if (first < 0) return { start: 0, end: total, pauses: [] };
   const pauses: SpeechActivity['pauses'] = [];
   let run = -1;
@@ -49,11 +52,16 @@ export function speechActivity(pcm: Pcm): SpeechActivity {
     if (!voiced[f]) {
       if (run < 0) run = f;
     } else if (run >= 0) {
-      if ((f - run) * FRAME_SECONDS >= MIN_PAUSE_SECONDS) pauses.push({ t0: run * FRAME_SECONDS, t1: f * FRAME_SECONDS });
+      if ((f - run) * FRAME_SECONDS >= minPause - 1e-9) pauses.push({ t0: run * FRAME_SECONDS, t1: f * FRAME_SECONDS });
       run = -1;
     }
   }
   return { start: first * FRAME_SECONDS, end: Math.min(total, (last + 1) * FRAME_SECONDS), pauses };
+}
+
+/** Speech start/end and inner pauses from frame energy with an adaptive threshold. */
+export function speechActivity(pcm: Pcm): SpeechActivity {
+  return activity(voicing(pcm).voiced, pcm.samples.length / pcm.sampleRate, MIN_PAUSE_SECONDS);
 }
 
 const VOWELS: Readonly<Record<string, RegExp>> = {
@@ -73,9 +81,16 @@ export function syllables(word: string, lang: string): number {
 interface Word {
   start: number;
   end: number;
+  /** Expected speaking time in relative units. */
   weight: number;
   /** Expected pause after this word (0 none, 1 comma, 2 clause, 3 sentence). */
   pause: number;
+}
+
+/** Relative speaking time of a word: letters (about one sound each) count most, syllables add vowel length. */
+function wordWeight(word: string, lang: string): number {
+  const digits = word.match(/\p{N}/gu)?.length ?? 0;
+  return 0.7 * syllables(word, lang) + 0.45 * (word.length + 4 * digits);
 }
 
 function words(text: string, lang: string): Word[] {
@@ -85,77 +100,166 @@ function words(text: string, lang: string): Word[] {
     const end = start + m[0].length;
     const after = text.slice(end, end + 3);
     const pause = /^[\s"»«”“)]*[.!?…]/u.test(after) ? 3 : /^[\s"»«”“)]*[;:–—]/u.test(after) ? 2 : /^[\s"»«”“)]*[,]/u.test(after) ? 1 : 0;
-    out.push({ start, end, weight: syllables(m[0], lang) + 0.4, pause });
+    out.push({ start, end, weight: wordWeight(m[0], lang), pause });
   }
   return out;
 }
 
 /**
- * Word timings for one utterance (spec 004 B2): energy finds speech start/end and pauses;
- * detected pauses are matched in order to punctuation; time between anchors is divided by
- * syllable weight. Deterministic; the error stays inside the utterance.
+ * Alignment costs (log-odds style). Fitted on reference voices with known word times: 270 German
+ * clips at three speaking rates, also with shortened pauses for fluent voices.
+ */
+const ALIGN = {
+  /** Shortest silence that can separate words. */
+  minPause: 0.05,
+  /** Variance of the log speaking rate per weight unit. */
+  rateVariance: 0.5,
+  /** A pause after a word, by punctuation strength (negative favours it), and per second of pause. */
+  pauseAfter: [1, -1.5, -2, -3],
+  pauseAfterPerSecond: [1, 2, 3, 4],
+  /** A pause inside a word (a stop consonant or a breath): base, and per second beyond 80 ms. */
+  pauseInside: 0.6,
+  pauseInsidePerSecond: 6,
+  /** Punctuation without a pause. */
+  noPause: [0, 0.4, 1, 2.5],
+  /** How far a free word start may move to an energy dip, and the cost per second of moving. */
+  snap: 0.05,
+  snapPerSecond: 1,
+  /** Longest run of words between two anchors, and most pauses considered (long footnotes). */
+  maxRun: 60,
+  maxPauses: 40,
+} as const;
+
+/**
+ * Word timings for one utterance (spec 004 B2). Energy finds speech start, end and pauses. A
+ * dynamic program then decides which pauses fall after which words: it favours pauses at
+ * punctuation, penalizes silence inside words and keeps the speaking rate steady between pauses.
+ * Between those anchors, time is divided by word weight over voiced time only, and free word
+ * starts move to a nearby energy dip. Deterministic; the error stays inside the utterance.
  */
 export function alignWords(pcm: Pcm, text: string, lang: string): WordTiming[] {
   const ws = words(text, lang);
   if (ws.length === 0) return [];
-  const act = speechActivity(pcm);
-  const totalWeight = ws.reduce((a, w) => a + w.weight, 0);
+  const { energy, peak, voiced } = voicing(pcm);
+  const act = activity(voiced, pcm.samples.length / pcm.sampleRate, ALIGN.minPause);
+  const pauses = act.pauses
+    .map((p) => ({ ...p, len: p.t1 - p.t0 }))
+    .sort((a, b) => b.len - a.len)
+    .slice(0, ALIGN.maxPauses)
+    .sort((a, b) => a.t0 - b.t0);
+  const n = ws.length;
+  const m = pauses.length;
+  const prefix = (values: number[]): number[] => {
+    const out = [0];
+    for (const v of values) out.push(out.at(-1)! + v);
+    return out;
+  };
+  const cumWeight = prefix(ws.map((w) => w.weight));
+  const cumPause = prefix(pauses.map((p) => p.len));
+  const cumInside = prefix(pauses.map((p) => ALIGN.pauseInside + ALIGN.pauseInsidePerSecond * Math.max(0, p.len - 0.08)));
+  const cumNoPause = prefix(ws.map((w, b) => (b < n - 1 ? ALIGN.noPause[w.pause]! : 0)));
+  const speech = act.end - act.start;
+  const rate = Math.max(0.02, (speech - cumPause[m]!) / cumWeight[n]!);
 
-  // Candidate boundaries (after word i) with punctuation, and where they would fall without pauses.
-  const cum: number[] = [];
-  let acc = 0;
-  for (const w of ws) {
-    acc += w.weight;
-    cum.push(acc);
-  }
-  const boundaries = ws.map((w, i) => ({ i, strength: w.pause, at: act.start + ((act.end - act.start) * cum[i]!) / totalWeight })).filter((b) => b.strength > 0 && b.i < ws.length - 1);
-
-  // Monotone matching: each pause (longest first) takes the nearest free punctuation boundary
-  // that keeps the order with the pauses already assigned.
-  const assigned = new Map<number, { t0: number; t1: number }>();
-  const byLength = [...act.pauses].sort((a, b) => b.t1 - b.t0 - (a.t1 - a.t0));
-  for (const p of byLength) {
-    const mid = (p.t0 + p.t1) / 2;
-    let best: { i: number; cost: number } | undefined;
-    for (const b of boundaries) {
-      if (assigned.has(b.i)) continue;
-      const ok = [...assigned.entries()].every(([j, q]) => (j < b.i ? q.t1 <= p.t0 : q.t0 >= p.t1));
-      if (!ok) continue;
-      const cost = Math.abs(b.at - mid) / (1 + b.strength * 0.5);
-      if (!best || cost < best.cost) best = { i: b.i, cost };
-    }
-    // Pauses far from any punctuation are breaths inside a clause: ignore them.
-    if (best && best.cost < Math.max(0.6, (act.end - act.start) * 0.25)) assigned.set(best.i, p);
-  }
-
-  // Segments between anchors; inside each, time by weight.
-  const timings: WordTiming[] = [];
-  const anchors = [...assigned.entries()].sort((a, b) => a[0] - b[0]);
-  let segStartWord = 0;
-  let segStartTime = act.start;
-  const flush = (lastWord: number, endTime: number): void => {
-    const seg = ws.slice(segStartWord, lastWord + 1);
-    const weight = seg.reduce((a, w) => a + w.weight, 0) || 1;
-    let t = segStartTime;
-    for (const w of seg) {
-      const d = ((endTime - segStartTime) * w.weight) / weight;
-      timings.push({ start: w.start, end: w.end, t0: round(t), t1: round(t + d) });
-      t += d;
+  // An anchor pairs boundary b (after word b) with pause j, stored at (b + 1) * width + (j + 1).
+  // The start is (-1, -1) and the end (n - 1, m).
+  const width = m + 2;
+  const cost = new Float64Array((n + 1) * width).fill(Infinity);
+  const back = new Int32Array((n + 1) * width).fill(-1);
+  cost[0] = 0;
+  const run = (b1: number, j1: number, b2: number, j2: number): number => {
+    const t1 = j1 < 0 ? act.start : pauses[j1]!.t1;
+    const t2 = j2 >= m ? act.end : pauses[j2]!.t0;
+    const voicedTime = t2 - t1 - (cumPause[j2]! - cumPause[j1 + 1]!);
+    if (voicedTime <= 0.04 * (b2 - b1)) return Infinity;
+    const weight = cumWeight[b2 + 1]! - cumWeight[b1 + 1]!;
+    const lr = Math.log(voicedTime / weight / rate);
+    return (weight * lr * lr) / ALIGN.rateVariance + (cumInside[j2]! - cumInside[j1 + 1]!) + (cumNoPause[b2]! - cumNoPause[b1 + 1]!);
+  };
+  const relax = (b2: number, j2: number, own: number): void => {
+    const at = (b2 + 1) * width + (j2 + 1);
+    for (let b1 = Math.max(-1, b2 - ALIGN.maxRun); b1 < b2; b1++) {
+      for (let j1 = -1; j1 < j2; j1++) {
+        if ((b1 < 0) !== (j1 < 0)) continue;
+        const prev = cost[(b1 + 1) * width + (j1 + 1)]!;
+        if (prev === Infinity) continue;
+        const c = prev + run(b1, j1, b2, j2) + own;
+        if (c < cost[at]!) {
+          cost[at] = c;
+          back[at] = (b1 + 1) * width + (j1 + 1);
+        }
+      }
     }
   };
-  for (const [i, p] of anchors) {
-    flush(i, p.t0);
-    segStartWord = i + 1;
-    segStartTime = p.t1;
+  for (let b = 0; b < n - 1; b++) {
+    const s = ws[b]!.pause;
+    for (let j = 0; j < m; j++) relax(b, j, ALIGN.pauseAfter[s]! - ALIGN.pauseAfterPerSecond[s]! * Math.min(0.8, pauses[j]!.len));
   }
-  flush(ws.length - 1, act.end);
-  return timings;
+  relax(n - 1, m, 0);
+  const anchors: Array<[number, number]> = [];
+  for (let k = back[n * width + m + 1]!; k > 0; k = back[k]!) anchors.unshift([Math.floor(k / width) - 1, (k % width) - 1]);
+
+  // Between anchors, weight advances over voiced time; pauses inside words are skipped.
+  const t0 = new Array<number>(n).fill(act.start);
+  const t1 = new Array<number>(n).fill(act.end);
+  let firstWord = 0;
+  let from = act.start;
+  let firstPause = 0;
+  const flush = (lastWord: number, to: number, endPause: number): void => {
+    const inside = pauses.slice(firstPause, endPause);
+    const voicedTime = to - from - inside.reduce((a, p) => a + p.len, 0);
+    const weight = cumWeight[lastWord + 1]! - cumWeight[firstWord]!;
+    const wall = (v: number): number => {
+      let t = from;
+      let left = v;
+      for (const p of inside) {
+        if (t + left <= p.t0) break;
+        left -= p.t0 - t;
+        t = p.t1;
+      }
+      return t + left;
+    };
+    for (let i = firstWord; i <= lastWord; i++) {
+      t0[i] = wall(((cumWeight[i]! - cumWeight[firstWord]!) / weight) * voicedTime);
+      t1[i] = wall(((cumWeight[i + 1]! - cumWeight[firstWord]!) / weight) * voicedTime);
+    }
+    t0[firstWord] = from;
+    t1[lastWord] = to;
+  };
+  for (const [b, j] of anchors) {
+    flush(b, pauses[j]!.t0, j);
+    firstWord = b + 1;
+    from = pauses[j]!.t1;
+    firstPause = j + 1;
+  }
+  flush(n - 1, act.end, m);
+
+  // Word starts not fixed by a pause move to the quietest frame nearby.
+  const fixed = new Set(anchors.map(([b]) => b + 1));
+  for (let i = 1; i < n; i++) {
+    if (fixed.has(i)) continue;
+    const reach = Math.floor(Math.min(ALIGN.snap, 0.35 * (t1[i]! - t0[i]!), 0.35 * (t1[i - 1]! - t0[i - 1]!)) / FRAME_SECONDS);
+    if (reach < 1) continue;
+    const center = Math.round(t0[i]! / FRAME_SECONDS);
+    let best = center;
+    let bestScore = Infinity;
+    for (let f = Math.max(0, center - reach); f <= Math.min(energy.length - 1, center + reach); f++) {
+      const score = energy[f]! / (peak || 1) + ALIGN.snapPerSecond * Math.abs(f - center) * FRAME_SECONDS;
+      if (score < bestScore) {
+        bestScore = score;
+        best = f;
+      }
+    }
+    t0[i] = best * FRAME_SECONDS;
+    t1[i - 1] = Math.min(t1[i - 1]!, t0[i]!);
+  }
+  return ws.map((w, i) => ({ start: w.start, end: w.end, t0: round(t0[i]!), t1: round(Math.max(t0[i]!, t1[i]!)) }));
 }
 
 const PAUSE_SECONDS = [0, 0.22, 0.32, 0.45];
 
 /**
- * Provisional word timings before the audio is known (a clip that is still streaming): syllable
+ * Provisional word timings before the audio is known (a clip that is still streaming): word
  * weight plus typical pauses at punctuation, stretched to `seconds`. Replaced by `alignWords` once
  * the whole clip has been aligned.
  */

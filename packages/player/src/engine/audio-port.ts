@@ -29,12 +29,19 @@ export interface AudioLike {
   preload?: string;
   /** Loaded time ranges (real media elements); without it a stream starts at once. */
   buffered?: { readonly length: number; end(index: number): number };
+  readonly paused?: boolean;
+  readonly duration?: number;
   play(): Promise<void>;
   pause(): void;
   onplaying: (() => void) | null;
   onended: (() => void) | null;
   onerror: (() => void) | null;
+  /** Paused by someone else (media keys, headset, the OS); the port pauses only after clearing it. */
+  onpause?: (() => void) | null;
 }
+
+/** No progress for this long while playing counts as a stall. */
+export const STALL_MS = 2500;
 
 export interface Ticker {
   every(ms: number, fn: () => void): () => void;
@@ -62,6 +69,8 @@ export class AudioSpeechPort implements SpeechPort {
   private volume = 1;
   /** The current audio reads a live stream (closed on stop so the connection does not linger). */
   private streaming = false;
+  /** Waiting for generated audio: before playback starts, or a stream waiting for its clip. */
+  private waiting = false;
 
   constructor(
     private readonly o: {
@@ -85,8 +94,10 @@ export class AudioSpeechPort implements SpeechPort {
       return;
     }
     this.o.onState?.('buffering');
+    this.waiting = true;
     const fail = (e: unknown): void => {
       if (!live()) return;
+      this.waiting = false;
       this.o.onState?.('failed', e instanceof Error ? e.message : String(e));
       r.onError('tts');
     };
@@ -116,39 +127,114 @@ export class AudioSpeechPort implements SpeechPort {
     if (next < 0) next = words.length;
     if (offset) audio.currentTime = words[next]?.t0 ?? words.at(-1)?.t1 ?? 0;
     // Estimated and aligned timings list the same words, so the emitted prefix stays valid.
+    let finished: TtsClip | undefined;
     aligned?.then((c) => {
+      finished = c;
       if (live() && c.words.length) words = c.words;
     }, () => undefined);
     let started = false;
+    let ended = false;
+    const now = this.o.now ?? (() => performance.now());
     const emit = (until: number): void => {
       while (next < words.length && words[next]!.t0 <= until) r.onBoundary(words[next++]!.start, 'word');
+    };
+    const end = (): void => {
+      if (!live() || ended) return;
+      ended = true;
+      this.waiting = false;
+      this.stopPolling?.();
+      this.stopPolling = undefined;
+      emit(Infinity);
+      r.onEnd();
+    };
+    const fail = (error: string, message: string): void => {
+      if (!live() || ended) return;
+      ended = true;
+      this.waiting = false;
+      this.stopPolling?.();
+      this.stopPolling = undefined;
+      this.o.onState?.('failed', message);
+      r.onError(error);
+    };
+    const play = (): void => {
+      audio.play().catch((e: unknown) => fail('play', e instanceof Error ? e.message : String(e)));
+    };
+    // A stream that broke off continues from the finished clip at the same moment.
+    let switched = false;
+    const toClip = (c: TtsClip): void => {
+      if (!live() || ended || switched) return;
+      switched = true;
+      const at = audio.currentTime;
+      audio.src = c.url;
+      audio.playbackRate = r.rate;
+      audio.currentTime = at;
+      play();
+    };
+    // Progress watch: an element can stop without `ended` (cut off at the end, a lost stream).
+    let lastTime = -1;
+    let lastMove = 0;
+    let nudged = false;
+    const watch = (): void => {
+      if (!live() || ended) return;
+      const t = audio.currentTime;
+      emit(t + 0.02);
+      if (t !== lastTime || audio.paused) {
+        lastTime = t;
+        lastMove = now();
+        this.waiting = false;
+        return;
+      }
+      if (now() - lastMove < STALL_MS) return;
+      lastMove = now();
+      const duration = audio.duration ?? NaN;
+      if (Number.isFinite(duration) && t >= duration - 0.3) return end();
+      if (this.streaming && !switched) {
+        if (finished) toClip(finished);
+        else this.waiting = true; // Still generating: the clip takes over once it is ready.
+        return;
+      }
+      if (nudged) return fail('stall', 'audio playback stalled');
+      nudged = true;
+      audio.currentTime = t;
+      play();
     };
     audio.onplaying = () => {
       if (!live() || started) return;
       started = true;
+      this.waiting = false;
       this.o.onState?.('playing');
       r.onStart();
       emit(audio.currentTime + 0.02);
-      this.stopPolling = (this.o.ticker ?? realTicker).every(40, () => live() && emit(audio.currentTime + 0.02));
+      this.stopPolling = (this.o.ticker ?? realTicker).every(40, watch);
     };
     audio.onended = () => {
-      if (!live()) return;
-      this.stopPolling?.();
-      emit(Infinity);
-      r.onEnd();
+      if (!this.streaming || switched || !aligned) return end();
+      // A stream of unknown length also "ends" when its connection drops: when the finished clip
+      // is longer, continue from it. At a regular end the clip arrives within moments.
+      const at = audio.currentTime;
+      const check = (c: TtsClip | undefined): void => {
+        if ((c?.words.at(-1)?.t1 ?? 0) > at + 0.3) toClip(c!);
+        else end();
+      };
+      if (finished) return check(finished);
+      const timer = setTimeout(() => check(finished), 1500);
+      aligned.then((c) => { clearTimeout(timer); check(c); }, () => { clearTimeout(timer); end(); });
     };
     audio.onerror = () => {
-      if (!live()) return;
-      this.stopPolling?.();
-      this.o.onState?.('failed', 'audio playback error');
-      r.onError('audio');
+      if (!live() || ended) return;
+      if (this.streaming && !switched && aligned) {
+        aligned.then(toClip, () => fail('audio', 'audio playback error'));
+        return;
+      }
+      fail('audio', 'audio playback error');
     };
-    const play = (): void => {
-      audio.play().catch((e: unknown) => {
-        if (!live()) return;
-        this.o.onState?.('failed', e instanceof Error ? e.message : String(e));
-        r.onError('play');
-      });
+    audio.onpause = () => {
+      // Our own pauses clear the handlers first. At the end of the media `pause` comes right
+      // before `ended`, so only a pause that stays without `ended` is an interruption.
+      if (!live() || ended || !started) return;
+      setTimeout(() => {
+        if (live() && !ended && audio.paused !== false) r.onInterrupted?.();
+      }, 300);
     };
     if (!stream || !audio.buffered) return play();
     // Streaming: start as soon as the rest will arrive before playback gets there. The rate comes
@@ -157,7 +243,6 @@ export class AudioSpeechPort implements SpeechPort {
     // fast GPU this starts in under a second; on a slow one it avoids stalling mid-sentence. The
     // finished clip (aligned) always starts it.
     audio.preload = 'auto';
-    const now = this.o.now ?? (() => performance.now());
     const t0 = now();
     let first: { t: number; loaded: number } | undefined;
     let last: { t: number; loaded: number } | undefined;
@@ -195,16 +280,22 @@ export class AudioSpeechPort implements SpeechPort {
     this.audio = undefined;
     if (a) {
       a.onplaying = a.onended = a.onerror = null;
+      a.onpause = null;
       a.pause();
       if (this.streaming) a.src = '';
     }
     this.streaming = false;
+    this.waiting = false;
   }
 
   cancel(): void {
     this.generation++;
     this.stop();
     this.o.onState?.('idle');
+  }
+
+  busy(): boolean {
+    return this.waiting;
   }
 
   /** Tempo change while playing: the engine restarts the utterance anyway; kept for completeness. */
@@ -253,6 +344,10 @@ export class RoutingSpeechPort implements SpeechPort {
   cancel(): void {
     this.audio.cancel();
     this.web?.cancel();
+  }
+
+  busy(): boolean {
+    return this.audio.busy();
   }
 
   setVolume(volume: number): void {

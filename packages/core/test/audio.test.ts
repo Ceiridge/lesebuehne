@@ -58,6 +58,50 @@ describe('M4: aligner', () => {
     expect(w[5]!.t1 - w[5]!.t0).toBeGreaterThan(w[6]!.t1 - w[6]!.t0);
   });
 
+  test('a list of commas: each pause goes to its own comma, silence inside a word is no boundary', () => {
+    const text = 'Komponisten, Bildhauer, Maler, Dichter, Propheten, sie sind die Erschaffer der Nachwelt.';
+    // Speech ≈ 70 ms per letter, growing pauses after the commas, a breath after "sind" and a 70 ms stop inside "Erschaffer".
+    const gaps = [0.12, 0.16, 0.22, 0.3, 0.45];
+    const parts: Array<['tone' | 'gap', number]> = [['gap', 0.2]];
+    const starts: number[] = [];
+    let t = 0.2;
+    for (const [i, word] of ['Komponisten', 'Bildhauer', 'Maler', 'Dichter', 'Propheten', 'sie', 'sind', 'die', 'Erschaffer', 'der', 'Nachwelt'].entries()) {
+      starts.push(t);
+      const d = word.length * 0.07;
+      if (word === 'Erschaffer') parts.push(['tone', d / 2], ['gap', 0.07], ['tone', d / 2]);
+      else parts.push(['tone', d]);
+      t += d + (word === 'Erschaffer' ? 0.07 : 0);
+      if (i < 5) { parts.push(['gap', gaps[i]!]); t += gaps[i]!; }
+      if (word === 'sind') { parts.push(['gap', 0.15]); t += 0.15; }
+    }
+    parts.push(['gap', 0.3]);
+    const w = alignWords(audio(parts), text, 'de');
+    expect(w).toHaveLength(11);
+    for (let k = 0; k <= 5; k++) expect(Math.abs(w[k]!.t0 - starts[k]!)).toBeLessThan(0.03);
+    // Inside the last clause the words follow the speaking rate, within 150 ms.
+    for (let k = 6; k < 11; k++) expect(Math.abs(w[k]!.t0 - starts[k]!)).toBeLessThan(0.15);
+    expect(w[9]!.t0).toBeGreaterThan(starts[8]! + 0.5);
+  });
+
+  test('the speaking rate changes between clauses: pauses still go to their own commas', () => {
+    // A quick first clause and a slow last one: a position guess by weight alone lands the long
+    // pause on the first comma and squeezes the words before it (the first aligner was off by 0.7 s).
+    const text = 'Eins zwei drei vier fünf sechs, sieben, acht neun zehn elf zwölf.';
+    const parts: Array<['tone' | 'gap', number]> = [['gap', 0.2]];
+    const starts: number[] = [];
+    let t = 0.2;
+    for (const [i, word] of ['Eins', 'zwei', 'drei', 'vier', 'fünf', 'sechs', 'sieben', 'acht', 'neun', 'zehn', 'elf', 'zwölf'].entries()) {
+      starts.push(t);
+      const d = word.length * (i < 6 ? 0.06 : i === 6 ? 0.07 : 0.09);
+      const gap = i === 5 ? 0.15 : i === 6 ? 0.3 : 0;
+      parts.push(['tone', d], ...(gap ? [['gap', gap] as ['gap', number]] : []));
+      t += d + gap;
+    }
+    parts.push(['gap', 0.3]);
+    const w = alignWords(audio(parts), text, 'de');
+    for (let k = 0; k < w.length; k++) expect(Math.abs(w[k]!.t0 - starts[k]!)).toBeLessThan(0.1);
+  });
+
   test('a breath far from punctuation is ignored; silence and empty text are safe', () => {
     const text = 'Eins zwei drei vier fünf sechs sieben acht.';
     const w = alignWords(audio([['tone', 0.4], ['gap', 0.12], ['tone', 2.6]]), text, 'de');

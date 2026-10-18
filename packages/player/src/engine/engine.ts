@@ -85,6 +85,8 @@ export class PlayerEngine {
   private sentenceStartedAt = 0;
   private positionAt = 0;
   private watchdog: unknown;
+  /** Where the watchdog last restarted speech (a second stall there skips ahead). */
+  private stuckAt: string | undefined;
 
   constructor(o: EngineOptions) {
     this.book = o.book;
@@ -124,6 +126,7 @@ export class PlayerEngine {
 
   /** Navigation: set the position; if playing, speech restarts there (B8, seek semantics). */
   seek(p: Position): void {
+    this.stuckAt = undefined;
     const target = this.clamp(p);
     this.setPosition(target);
     if (this.playing.value) this.speakFrom(target);
@@ -131,6 +134,7 @@ export class PlayerEngine {
 
   play(): void {
     if (this.silent || this.playing.value || this.timeline.entries.length === 0) return;
+    this.stuckAt = undefined;
     this.playing.value = true;
     this.speakFrom(this.position.value);
   }
@@ -240,9 +244,23 @@ export class PlayerEngine {
     const ms = Math.max(2 * this.estimateMs(item), WATCHDOG_MIN_MS);
     this.watchdog = this.timers.setTimeout(() => {
       if (g !== this.generation || !this.playing.value) return;
-      // No speech event for too long (lost `end`, D9): restart at the estimated word.
+      // Audio that is still being generated is late, not lost.
+      if (this.port?.busy?.()) return this.armWatchdog(item, g);
+      // No speech event for too long (lost `end`, D9): restart at the estimated word. A restart
+      // that gets stuck at the same word again goes on with the next utterance instead.
       this.frame(this.timers.now());
-      this.speakFrom(this.position.value);
+      const p = this.position.value;
+      const at = `${p.entryIndex}:${p.tokenIndex}`;
+      if (this.stuckAt === at) {
+        this.stuckAt = undefined;
+        this.port?.cancel();
+        this.estimator = undefined;
+        this.speakingFootnote.value = null;
+        this.next();
+        return;
+      }
+      this.speakFrom(p);
+      this.stuckAt = at;
     }, ms);
   }
 
@@ -274,6 +292,10 @@ export class PlayerEngine {
       },
       onError: () => {
         if (live()) this.onEnd(item);
+      },
+      onInterrupted: () => {
+        // Paused from outside (media keys, headset): pause here too, at the current word.
+        if (live()) this.pause();
       },
     });
     this.armWatchdog(item, g);
@@ -314,6 +336,7 @@ export class PlayerEngine {
 
   private onEnd(item: QueueItem): void {
     this.timers.clearTimeout(this.watchdog);
+    this.stuckAt = undefined;
     if (item.kind === 'sentence' && item.last && this.voice) {
       const sentence = this.timeline.entries[item.entryIndex]?.sentence;
       if (sentence) {
