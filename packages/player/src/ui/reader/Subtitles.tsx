@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef } from 'preact/hooks';
 import type { ReaderSession } from '../../app/session.ts';
 import { settings } from '../../app/store.ts';
 import { rsvpWord } from '../../engine/rsvp.ts';
+import { t } from '../../i18n/i18n.ts';
 
 /** Longest subtitle line block (characters) before the sentence is split into cues. */
 export const SUBTITLE_CHARS = 96;
@@ -102,7 +103,7 @@ export function RsvpView({ session, variant }: { session: ReaderSession; variant
     observer?.observe(frame);
     void document.fonts?.ready.then(fit);
     return () => { disposed = true; observer?.disconnect(); };
-  }, [w?.before, w?.pivot, w?.after, variant, settings.value.font]);
+  }, [w?.before, w?.pivot, w?.after, variant, settings.value.font, settings.value.subtitleFontSize]);
   return (
     <div class={`rsvp rsvp-${variant}`} lang={session.book.language} aria-live="off">
       <div class="rsvp-frame" onClick={variant === 'view' ? () => session.togglePlay() : undefined}>
@@ -143,6 +144,32 @@ export function Subtitles({ session }: { session: ReaderSession }) {
       </p>
     </div>
   );
+}
+
+/** One sentence over the stage, at the configured reading size. */
+export function StageSentence({ session }: { session: ReaderSession }) {
+  const line = useRef<HTMLParagraphElement>(null);
+  const previousEntry = useRef(-1);
+  const p = session.engine.position.value;
+  const entry = session.timeline.entries[p.entryIndex];
+  useLayoutEffect(() => {
+    const element = line.current;
+    if (!element) return;
+    if (previousEntry.current !== p.entryIndex) element.scrollTop = 0;
+    previousEntry.current = p.entryIndex;
+    const word = element.querySelector('.is-current');
+    if (!word) return;
+    const bounds = element.getBoundingClientRect();
+    const current = word.getBoundingClientRect();
+    if (current.bottom > bounds.bottom) element.scrollTop += current.bottom - bounds.bottom + 12;
+    else if (current.top < bounds.top) element.scrollTop -= bounds.top - current.top + 12;
+  }, [p.entryIndex, p.tokenIndex]);
+  if (!entry) return null;
+  return <section class="stage-sentence" lang={session.book.language} aria-label={t('reader.text')}>
+    <p ref={line} class="stage-sentence-text">
+      <KaraokeText session={session} entryIndex={p.entryIndex} sentence={entry.sentence} current={p.tokenIndex} />
+    </p>
+  </section>;
 }
 
 /** "Sentence by sentence" view: the current sentence large, its neighbours dimmed. */

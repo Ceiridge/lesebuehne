@@ -105,6 +105,11 @@ export const IconStage = (p: IconProps) => (
     <path d="M3 18h18M3 21h12" />
   </Svg>
 );
+export const IconZen = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M8 3H3v5M16 3h5v5M3 16v5h5M21 16v5h-5" />
+  </Svg>
+);
 export const IconPage = (p: IconProps) => (
   <Svg {...p}>
     <rect x="5" y="3" width="14" height="18" rx="2" />

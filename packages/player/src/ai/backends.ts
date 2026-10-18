@@ -5,6 +5,7 @@ import {
   ImageDirector,
   SpeechDirector,
   type MediaStore,
+  type ImageOptions,
   registryComplete,
   type AnimateOptions,
   type AnimationResponse,
@@ -21,6 +22,7 @@ import { OpenAICompatibleImages, OpenRouterImages } from '@lesebuehne/image-open
 import { OpenAICompatibleTTS, openaiTTS, qwentts } from '@lesebuehne/tts-openai-compatible';
 import { MemoryMediaStore } from './idb-cache.ts';
 import type { AiPrefs, BrowserProviderId } from './prefs.ts';
+import { splitImageGrid } from './image-grid.ts';
 
 export type Http = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -41,6 +43,7 @@ export interface ProviderStatus {
 }
 
 export interface ImageResult {
+  tiles?: Array<{ url: string }>;
   cached?: boolean;
   /** Absolute URL of the picture. */
   url: string;
@@ -66,7 +69,7 @@ export interface AiBackend {
   animate(book: Book, sectionId: string, plan: VisualPlan, opts: AnimateOptions, signal: AbortSignal): Promise<AnimationResponse>;
   status(): Promise<BackendStatus>;
   /** Server images (spec 005): an illustration for an `image` plan (slow: minutes). */
-  image?(book: Book, sectionId: string, plan: VisualPlan, opts: { regenerate?: boolean; select?: number }, signal: AbortSignal): Promise<ImageResult>;
+  image?(book: Book, sectionId: string, plan: VisualPlan, opts: ImageOptions, signal: AbortSignal): Promise<ImageResult>;
   /** Server TTS (spec 004): WAV audio and aligned word timings for one utterance. */
   tts?(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }>;
   /** Starts an own sign-in on the server; returns the URL to open. */
@@ -160,9 +163,9 @@ export class ServerBackend implements AiBackend {
     };
   }
 
-  async image(book: Book, sectionId: string, plan: VisualPlan, opts: { regenerate?: boolean; select?: number }, signal: AbortSignal): Promise<ImageResult> {
+  async image(book: Book, sectionId: string, plan: VisualPlan, opts: ImageOptions, signal: AbortSignal): Promise<ImageResult> {
     const r = await this.withBook(book, () => this.post<ImageResult>('api/images', { bookId: book.id, sectionId, plan, ...opts }, signal));
-    return { ...r, url: this.url(r.url) };
+    return { ...r, url: this.url(r.url), ...(r.tiles ? { tiles: r.tiles.map(tile => ({ url: this.url(tile.url) })) } : {}) };
   }
 
   async tts(text: string, lang: string, voice: string, signal: AbortSignal): Promise<{ audio: Blob; words: WordTiming[]; cached?: boolean }> {
@@ -283,17 +286,22 @@ export class BrowserBackend implements AiBackend {
     const objectUrl = media.objectUrl ?? ((b: Blob) => URL.createObjectURL(b));
     if (media.image) {
       this.registry.register(media.image);
-      const images = new ImageDirector({ registry: this.registry, chain: [media.image.id], cache, store, styleReference: true, styleBible: (b) => this.service.styleBible(b) });
+      const images = new ImageDirector({ registry: this.registry, chain: [media.image.id], cache, store, styleReference: true, styleBible: (b) => this.service.styleBible(b), splitGrid: splitImageGrid });
       this.image = (book, sectionId, plan, opts, signal) => this.tasks.stage.run(signal, async (s) => {
         const r = await images.generate(book, sectionId, plan, opts, s);
-        let url = this.urls.get(r.file);
-        if (!url) {
-          const bytes = await store.get(r.file);
-          if (!bytes) throw new Error('stored image missing');
-          url = objectUrl(new Blob([bytes as BlobPart], { type: r.mime }));
-          this.urls.set(r.file, url);
-        }
-        return { url, providerId: r.providerId, variants: r.variants, selected: r.selected, cached: r.cached };
+        const storedUrl = async (file: string, mime: string) => {
+          let url = this.urls.get(file);
+          if (!url) {
+            const bytes = await store.get(file);
+            if (!bytes) throw new Error('stored image missing');
+            url = objectUrl(new Blob([bytes as BlobPart], { type: mime }));
+            this.urls.set(file, url);
+          }
+          return url;
+        };
+        const url = await storedUrl(r.file, r.mime);
+        const tiles = r.tiles ? await Promise.all(r.tiles.map(async tile => ({ url: await storedUrl(tile.file, tile.mime) }))) : undefined;
+        return { url, providerId: r.providerId, variants: r.variants, selected: r.selected, cached: r.cached, ...(tiles ? { tiles } : {}) };
       });
     }
     if (media.tts) {

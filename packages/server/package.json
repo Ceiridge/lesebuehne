@@ -9,14 +9,15 @@
   "dependencies": {
     "@lesebuehne/core": "workspace:*",
     "@lesebuehne/director": "workspace:*",
+    "@lesebuehne/image-openai-compatible": "workspace:*",
+    "@lesebuehne/image-use": "workspace:*",
     "@lesebuehne/llm-anthropic-compatible": "workspace:*",
     "@lesebuehne/llm-chatgpt-plan": "workspace:*",
     "@lesebuehne/llm-codex-auth": "workspace:*",
     "@lesebuehne/llm-openai-compatible": "workspace:*",
     "@lesebuehne/llm-openrouter": "workspace:*",
     "@lesebuehne/tts-openai-compatible": "workspace:*",
-    "@lesebuehne/image-use": "workspace:*",
-    "@lesebuehne/image-openai-compatible": "workspace:*",
+    "sharp": "^0.35.5",
     "zod": "4.6.5"
   }
 }

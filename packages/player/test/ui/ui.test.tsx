@@ -433,6 +433,39 @@ describe('views: subtitles, cinema, sentence by sentence', () => {
       }
     }
   });
+  test('Zen preserves the reading layout and position; Escape exits even with a select focused', async () => {
+    // Happy DOM gives inner/outer/screen identical dimensions, which resembles F11.
+    const outerHeight = Object.getOwnPropertyDescriptor(window, 'outerHeight');
+    Object.defineProperty(window, 'outerHeight', { value: window.innerHeight + 80, configurable: true });
+    const env = await makeEnv({ voices: [hedda] });
+    const session = await openSession(env, bundleOf('zen.txt', enc('Ein Satz auf der Bühne. Noch ein Satz zum Lesen.')));
+    settings.value = { ...settings.value, layout: 'overlay' };
+    const host = mount(env, <Reader session={session} />);
+    try {
+      await flush();
+      session.navigate({ entryIndex: 1, tokenIndex: 0 });
+      const position = session.engine.position.peek();
+      const button = host.querySelector<HTMLButtonElement>('.zen-toggle')!;
+      button.click();
+      await flush();
+      expect(host.querySelector('.reader.is-zen')).not.toBeNull();
+      expect(button.getAttribute('aria-pressed')).toBe('true');
+      expect(settings.peek().layout).toBe('overlay');
+      expect(session.engine.position.peek()).toEqual(position);
+      host.querySelector<HTMLSelectElement>('.layout-picker')!.focus();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      await flush();
+      expect(host.querySelector('.reader.is-zen')).toBeNull();
+      expect(button.getAttribute('aria-pressed')).toBe('false');
+      expect(document.activeElement).toBe(button);
+      expect(session.engine.position.peek()).toEqual(position);
+    } finally {
+      render(null, host);
+      if (outerHeight) Object.defineProperty(window, 'outerHeight', outerHeight);
+      else Reflect.deleteProperty(window, 'outerHeight');
+    }
+  });
+
   sampleTest('cinema shows stage + subtitles without the text pane; sentence view shows the current sentence; S toggles subtitles', async () => {
     const t = await makeEnv({ voices: [hedda] });
     const s = await openSession(t, bundleOf('aufklaerung.txt', kantBytes));
@@ -452,6 +485,25 @@ describe('views: subtitles, cinema, sentence by sentence', () => {
     await flush();
     expect(host.querySelector('.subtitles')).toBeNull();
     dispatch(s, 'toggle-subtitles');
+    await flush();
+    expect(host.querySelector('.subtitles')).not.toBeNull();
+    const beforeOverlay = s.engine.position.peek();
+    settings.value = { ...settings.peek(), layout: 'overlay' };
+    await flush();
+    expect(s.stageVisible).toBe(true);
+    expect(host.querySelector('.stage')).not.toBeNull();
+    expect(host.querySelector('.book-text')).toBeNull();
+    expect(host.querySelectorAll('.stage-sentence-text')).toHaveLength(1);
+    expect(host.querySelector('.stage-sentence-text')?.textContent).toBe(s.timeline.entries[beforeOverlay.entryIndex]!.sentence.text);
+    expect(host.querySelector('.subtitles')).toBeNull();
+    expect(s.engine.position.peek()).toEqual(beforeOverlay);
+    expect(dispatch(s, 'toggle-subtitles')).toBe(false);
+    expect(settings.peek().subtitles).toBe(true);
+    s.navigate({ entryIndex: 2, tokenIndex: 0 });
+    await flush();
+    expect(host.querySelector('.stage-sentence-text')?.textContent).toBe(s.timeline.entries[2]!.sentence.text);
+    expect(host.querySelector('.stage-sentence-text .is-current')?.textContent).toBe(s.timeline.entries[2]!.sentence.tokens[s.engine.position.peek().tokenIndex]!.text);
+    settings.value = { ...settings.peek(), layout: 'stage' };
     await flush();
     expect(host.querySelector('.subtitles')).not.toBeNull();
     render(null, host);

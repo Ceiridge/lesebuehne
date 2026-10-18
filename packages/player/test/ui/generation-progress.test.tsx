@@ -3,6 +3,7 @@ import { render } from 'preact';
 import { withDom } from '../../../../tests/support/with-dom.ts';
 import { TtsBuffer, ttsStatus } from '../../src/ai/tts.ts';
 import { BrowserBackend } from '../../src/ai/backends.ts';
+import type { AiBackend, ImageResult } from '../../src/ai/backends.ts';
 import { FakeLLM } from '@lesebuehne/core';
 import { t } from '../../src/i18n/i18n.ts';
 import { ttsBuffer, setBackend } from '../../src/ai/state.ts';
@@ -15,6 +16,49 @@ import { bundleOf, flush, makeEnv, openSession } from './support.ts';
 describe('live generation progress', () => {
   withDom();
   afterEach(() => { setBackend(undefined); settings.value = defaultSettings(); ttsStatus.value = { state: 'idle', ahead: 0, limited: false }; });
+
+  test('parallel sentence images keep separate timeline segments and the full section margin scale', async () => {
+    settings.value = { ...defaultSettings(), visualKinds: 'images', imageInterval: 'sentence' };
+    const session = await openSession(await makeEnv(), bundleOf('sentences.txt', new TextEncoder().encode('Ein Boot fährt. Ein Baum wächst. Ein Vogel singt. Ein Kind lacht.')));
+    const requests: Array<{ resolve(r: ImageResult): void; reject(e: Error): void }> = [];
+    const backend: AiBackend = { mode: 'server', plans: false,
+      prepare: async () => { throw new Error('no text provider'); },
+      plan: async () => { throw new Error('unused'); }, animate: async () => { throw new Error('unused'); },
+      status: async () => ({ chain: [], providers: [], budget: { images: 2, animations: 3 } }),
+      image: () => new Promise((resolve, reject) => requests.push({ resolve, reject })),
+    };
+    session.attachAi(backend);
+    const host = document.createElement('div'); document.body.appendChild(host);
+    render(<><GenerationProgress session={session} /><SectionGeneration session={session} sectionId={session.order[0]!.id} /></>, host);
+    const segments = (scope: string) => [...host.querySelectorAll<HTMLElement>(`${scope} .generation-kind-image`)];
+    try {
+      await flush();
+      expect(segments('.generation-row.generation-stage')).toHaveLength(4);
+      expect(segments('.generation-row.generation-stage').every(s => s.classList.contains('is-idle'))).toBe(true);
+      session.ai!.tick(); await flush();
+      expect(requests).toHaveLength(4);
+      const ready = { url: 'image', providerId: 'fake', variants: 1, selected: 0 };
+      // Later sentences complete first, with the same status on two neighbouring sentences.
+      requests[2]!.resolve(ready); requests[3]!.resolve(ready);
+      requests[1]!.reject(new Error('temporarily unavailable'));
+      await flush();
+      const horizontal = segments('.generation-row.generation-stage');
+      const vertical = segments('.section-generation');
+      expect(horizontal).toHaveLength(4);
+      expect(vertical).toHaveLength(4);
+      expect(session.generation.peek().stage.map(r => r.state)).toEqual(['working', 'error', 'ready', 'ready']);
+      for (let i = 0; i < 4; i++) {
+        const entry = session.timeline.entries[i]!;
+        expect(horizontal[i]!.dataset.entryIndex).toBe(String(i));
+        expect(horizontal[i]!.title).toContain(t('generation.sentence', { number: i + 1 }));
+        expect(parseFloat(horizontal[i]!.style.left)).toBeCloseTo(entry.start / session.timeline.duration * 100);
+        expect(parseFloat(vertical[i]!.style.top)).toBeCloseTo(entry.start / session.timeline.duration * 100);
+        expect(parseFloat(vertical[i]!.style.height)).toBeCloseTo((entry.end - entry.start) / session.timeline.duration * 100);
+      }
+      requests[0]!.resolve(ready); await flush();
+      expect(segments('.section-generation')).toHaveLength(4);
+    } finally { render(null, host); session.dispose(); }
+  });
 
   test('header separates voice and stage selection, status and settings links', async () => {
     settings.value = { ...defaultSettings(), layout: 'stage', visualKinds: 'images' };
@@ -30,7 +74,7 @@ describe('live generation progress', () => {
       ttsStatus.value = { ...ttsStatus.peek(), limited: true, lastError: 'speech only' };
       await flush();
       const speech = host.querySelector<HTMLButtonElement>('[data-generator="speech"]')!;
-      const stage = host.querySelector<HTMLButtonElement>('[data-generator="stage"]')!;
+      const stage = host.querySelector<HTMLElement>('[data-generator="stage"]')!;
       expect(speech.textContent).toContain('S99 · Deutscher Erzähler');
       expect(speech.classList.contains('is-limited')).toBe(true);
       expect(stage.textContent).toContain(t('ai.visualKinds.images'));
@@ -39,8 +83,14 @@ describe('live generation progress', () => {
       speech.click();
       expect(session.settingsTab.value).toBe('reading');
       expect(session.panel.value).toBe('settings');
-      stage.click();
+      stage.querySelector<HTMLButtonElement>('button')!.click();
       expect(session.settingsTab.value).toBe('stage');
+      const kinds = stage.querySelector<HTMLSelectElement>('select')!;
+      expect(kinds.value).toBe('images');
+      kinds.value = 'animations';
+      kinds.dispatchEvent(new Event('change', { bubbles: true }));
+      await flush();
+      expect(settings.peek().visualKinds).toBe('animations');
       session.setVoice({ voiceURI: 'browser:en', name: 'English Voice', lang: 'en', default: false, localService: true });
       await flush();
       expect(speech.textContent).toContain('English Voice');

@@ -32,6 +32,16 @@ export function AiIndicator({ session }: { session: ReaderSession }) {
       const label = t(`generation.${item.kind}`);
       const status = t(`header.generation.${item.state}`);
       const description = `${label}: ${item.selected} · ${status}`;
+      if (item.kind === 'stage') return <div key={item.kind} class={`ai-indicator header-generator header-stage is-${item.state}`} data-generator="stage">
+        <button type="button" class="header-stage-settings" title={`${description}\n${item.detail}`} aria-label={`${t('settings.tab.stage')}: ${status}`}
+          onClick={() => { session.settingsTab.value = 'stage'; session.panel.value = 'settings'; }}>
+          <strong>{label}</strong><span class="header-generator-status"><span class="ai-dot" aria-hidden="true" />{status}</span>
+        </button>
+        <select class="header-visual-kinds" aria-label={t('ai.visualKinds')} value={settings.value.visualKinds}
+          onChange={(e) => { settings.value = { ...settings.value, visualKinds: e.currentTarget.value as 'mixed' | 'images' | 'animations' }; }}>
+          {(['mixed', 'images', 'animations'] as const).map(kind => <option key={kind} value={kind}>{t(`ai.visualKinds.${kind}`)}</option>)}
+        </select>
+      </div>;
       return <button key={item.kind} type="button" class={`ai-indicator header-generator is-${item.state}`} data-generator={item.kind}
         title={`${description}${item.detail ? `\n${item.detail}` : ''}`} aria-label={description}
         onClick={() => { session.settingsTab.value = item.tab; session.panel.value = 'settings'; }}>

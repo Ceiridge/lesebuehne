@@ -18,6 +18,7 @@ import { planSection, type ForcedMode } from '@lesebuehne/director';
 import { resolveCueTimes, StageScheduler } from '@lesebuehne/renderers';
 import { batch, computed, effect, signal } from '@preact/signals';
 import { AiPlanner, type PlanInfo } from '../ai/planner.ts';
+import { ImageSequencePlanner } from '../ai/image-sequence.ts';
 import type { AiBackend } from '../ai/backends.ts';
 import { aiBackend, aiDetails, refreshDetails, ttsBuffer, ttsVoices } from '../ai/state.ts';
 import { TtsBuffer } from '../ai/tts.ts';
@@ -91,6 +92,7 @@ export class ReaderSession {
   /** Animation programs by section (spec 003). */
   readonly animations = signal<ReadonlyMap<string, AnimationEntry>>(new Map());
   readonly stageGeneration = signal<ReadonlyMap<string, GenerationState>>(new Map());
+  readonly imageSequence = signal<ImageSequencePlanner | undefined>(undefined);
   readonly generation = computed(() => {
     const stage: GenerationRange[] = [];
     const speech: GenerationRange[] = [];
@@ -101,7 +103,12 @@ export class ReaderSession {
     const chunks = this.speechRanges.value;
     const plans = this.plans.value;
     const planned = this.planInfo.value;
-    for (const entry of this.timeline.entries) {
+    const sequence = this.imageSequence.value;
+    for (const [i, entry] of this.timeline.entries.entries()) {
+      if (sequence) {
+        stage.push({ start: entry.start, end: entry.end, sectionId: entry.sectionId, entryIndex: i, state: sequence.stateAt(i), stageKind: 'image' });
+        continue;
+      }
       const state = states.get(entry.sectionId) ?? 'idle';
       // Do not label a queued AI decision with the temporary heuristic's mode.
       const mode = (state === 'working' || state === 'queued') && !planned.has(entry.sectionId) ? undefined : plans.get(entry.sectionId)?.mode;
@@ -126,7 +133,7 @@ export class ReaderSession {
     });
   });
   /** LLM director, when an AI backend is available (B8). */
-  ai: AiPlanner | undefined;
+   ai: AiPlanner | ImageSequencePlanner | undefined;
   private readonly aiPlans = new Map<string, VisualPlan>();
   /** Plan revision per section: a new plan gets a new stage key, so the stage crossfades to it. */
   private readonly planRev = new Map<string, number>();
@@ -184,10 +191,19 @@ export class ReaderSession {
       else this.engine.pause();
     });
     this.stopVolume = effect(() => this.engine.setVolume(settings.value.volume));
-    this.stopStageVisibility = effect(() => { const visible = this.stageVisible; this.ai?.setActive(visible); });
-    let preference = settings.peek().visualKinds;
+    this.stopStageVisibility = effect(() => {
+      const visible = this.stageVisible;
+      const concurrency = settings.value.imageConcurrency;
+      this.ai?.setActive(visible);
+      this.ai?.setImageConcurrency(concurrency);
+    });
+    const planningPreference = () => {
+      const s = settings.value;
+      return `${s.visualKinds}:${s.imageInterval}:${s.imageIntervalSeconds}:${s.imageGrid}`;
+    };
+    let preference = planningPreference();
     this.stopPreference = effect(() => {
-      const next = settings.value.visualKinds;
+      const next = planningPreference();
       if (next === preference) return;
       preference = next;
       this.attachAi(aiBackend.peek());
@@ -203,7 +219,7 @@ export class ReaderSession {
 
   get stageVisible(): boolean {
     const layout = settings.value.layout;
-    return layout === 'stage' || layout === 'cinema';
+    return layout === 'stage' || layout === 'cinema' || layout === 'overlay';
   }
 
   /** The RSVP layout paces itself (no voice, or "RSVP without voice"); play toggles the pacer. */
@@ -279,8 +295,22 @@ export class ReaderSession {
   attachAi(backend: AiBackend | undefined): void {
     if (this.disposed) return;
     this.ai?.dispose();
+    this.imageSequence.value = undefined;
     this.stageGeneration.value = new Map();
     const env = this.env;
+    const s = settings.peek();
+    if (backend?.image && s.visualKinds === 'images' && (s.imageInterval !== 'auto' || s.imageGrid) && !this.stageCachePaused.peek()) {
+      const sequence = new ImageSequencePlanner({ book: this.book, timeline: this.timeline,
+        cadence: { interval: s.imageInterval === 'auto' ? 'section' : s.imageInterval, seconds: s.imageIntervalSeconds, grid: s.imageGrid },
+        entryIndex: () => this.engine.position.peek().entryIndex, now: () => env.timers.now(),
+        options: () => this.imageOptions(), applyStyle: style => { this.styleBible.value = style; },
+      }, backend);
+      this.imageSequence.value = sequence;
+      this.ai = sequence;
+      sequence.setImageConcurrency(s.imageConcurrency);
+      sequence.setActive(this.stageVisible);
+      return;
+    }
     // A browser setup with only voices or images (no text model) keeps the heuristic plans.
     this.ai = backend && backend.plans !== false && !this.stageCachePaused.peek()
       ? new AiPlanner(
@@ -295,12 +325,19 @@ export class ReaderSession {
             applyImage: (id, image) => (this.images.value = new Map(this.images.value).set(id, image)),
             now: () => env.timers.now(),
             prefer: () => (settings.value.visualKinds === 'mixed' ? undefined : settings.value.visualKinds),
+            imageOptions: () => this.imageOptions(),
             generation: (id, state) => { this.stageGeneration.value = new Map(this.stageGeneration.peek()).set(id, state); },
           },
           backend,
         )
       : undefined;
     this.ai?.setActive(this.stageVisible);
+    this.ai?.setImageConcurrency(s.imageConcurrency);
+  }
+
+  private imageOptions() {
+    const s = settings.peek();
+    return { ...(s.imageQuality !== 'auto' ? { quality: s.imageQuality } : {}), resolution: s.imageResolution, styleReference: s.imageStyleReference };
   }
 
   static async open(env: AppEnv, library: LibraryService, bundle: BookBundle, o: OpenOptions): Promise<ReaderSession> {
@@ -439,6 +476,7 @@ export class ReaderSession {
 
   /** User navigation: move the clock (restart speech if playing), switch the stage now (B8, B9). */
   navigate(p: Position): void {
+    this.imageSequence.peek()?.seek();
     const resume = this.rsvp.running.value;
     this.rsvp.stop();
     batch(() => {

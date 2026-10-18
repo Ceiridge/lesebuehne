@@ -50,6 +50,7 @@ export function applySettings(s: Settings, root: HTMLElement, prefersDark: boole
   root.style.setProperty('--font-reading', fontStack(s.font));
   root.style.setProperty('--font-ui', fontStack('source-sans'));
   root.style.setProperty('--reading-size', `${s.fontSize}px`);
+  root.style.setProperty('--subtitle-size', `${s.subtitleFontSize}px`);
   root.style.setProperty('--reading-line', String(s.lineHeight));
   root.style.setProperty('--reading-measure', `${s.measure}ch`);
   root.style.setProperty('--reading-margin', `${s.margins}px`);

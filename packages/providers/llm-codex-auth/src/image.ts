@@ -30,7 +30,7 @@ export class CodexImageProvider implements ImageProvider {
   readonly label = 'ChatGPT images via Codex';
   readonly runsIn = ['server'] as const;
   readonly capabilities = { styleReference: true };
-  readonly limits = { concurrency: 1 };
+  readonly limits = { concurrency: 4 };
   readonly costHint = 'subscription' as const;
   private readonly fetchImpl: FetchLike;
 
@@ -51,7 +51,7 @@ export class CodexImageProvider implements ImageProvider {
     return first;
   }
 
-  async generate(req: { prompt: string; size: string; styleRef?: Uint8Array; signal: AbortSignal }): Promise<{ image: Uint8Array; mime: string; model?: string }> {
+  async generate(req: Parameters<ImageProvider['generate']>[0]): Promise<{ image: Uint8Array; mime: string; model?: string }> {
     const headers = await this.auth.authHeaders(req.signal);
     const model = await this.model(req.signal);
     const text = req.styleRef
@@ -63,7 +63,7 @@ export class CodexImageProvider implements ImageProvider {
     ];
     const tool: Record<string, unknown> = { type: 'image_generation', output_format: 'png', size: req.size };
     if (this.config.imageModel) tool.model = this.config.imageModel;
-    if (this.config.quality) tool.quality = this.config.quality;
+    if (req.quality ?? this.config.quality) tool.quality = req.quality ?? this.config.quality;
     const res = await request(this.id, this.fetchImpl, this.auth.endpoint('/responses'), {
       method: 'POST',
       signal: req.signal,

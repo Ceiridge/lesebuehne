@@ -104,10 +104,12 @@ export interface TTSProvider extends ProviderMeta {
   }>;
 }
 
+export type ImageQuality = 'low' | 'medium' | 'high';
+
 export interface ImageProvider extends ProviderMeta {
   kind: 'image';
   /** `size` like `1536x1024`; `styleRef` = an image whose style to follow (PNG/JPEG bytes). */
-  generate(req: { prompt: string; size: string; styleRef?: Uint8Array; signal: AbortSignal }): Promise<{ image: Uint8Array; mime: string; model?: string }>;
+  generate(req: { prompt: string; size: string; quality?: ImageQuality; styleRef?: Uint8Array; signal: AbortSignal }): Promise<{ image: Uint8Array; mime: string; model?: string }>;
 }
 
 export interface Aligner extends ProviderMeta {

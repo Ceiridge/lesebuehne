@@ -1,5 +1,33 @@
 # Changelog
 
+## Sentence image scheduling and progress
+
+- Image sequences keep unfinished requests during playback. Current sentences take priority over older queued sentences.
+- Short sentences no longer restart the generation delay. Failed requests retry after two minutes while paused.
+- Stage progress shows each sentence separately. Text margins use the full section range instead of the first status range.
+
+## Image sequences, subtitle size and fullscreen Zen (2026-10-18)
+
+- Subtitle size is adjustable from 14 to 48 px for line and single-word subtitles.
+- Image-only sequences support section, paragraph, sentence and estimated reading-time intervals.
+- Optional 2×2 batches request four scenes at once. The server or browser crops and caches four separate images.
+- Image generation defaults to four parallel requests in a separate queue. The reader setting supports one to four requests.
+- Planning and animation code keep two queue slots. TTS uses its own queue.
+- Fixed image sequences skip per-scene LLM planning. Four concurrent 2×2 batches cover up to 16 scenes.
+- Browser fullscreen starts Zen automatically. Leaving fullscreen exits Zen; desktop F11 uses a window-size fallback.
+
+## Stage overlay and image controls (2026-10-18)
+
+- The text-over-stage layout shows only the current sentence at the configured reading font size.
+- The image blurs only behind that sentence. A dark text outline and sharp shadow support contrast; surrounding text and margin tracks are hidden.
+- A separate image-motion switch disables zoom and pan, including on loaded images.
+- Zen mode fills the window with the reading area. Edge hover or touch reveals controls; Escape restores the normal view.
+- The header includes a direct selector for mixed visuals, images, or animations/diagrams.
+- Stage settings offer image quality requests and a style-reference switch.
+- Image resolution settings request smaller images before generation. Compact uses 1024×688 or 832×832; Square uses 1024×1024.
+- Image-use, Codex and compatible OpenAI image models receive quality requests. Providers may override them.
+- Image caches separate quality, resolution and reference settings. Finished images remain available after settings change.
+
 ## Reader settings and playback fixes (2026-10-18)
 
 - Settings groups controls by task: narration, text, stage, AI connection and storage.

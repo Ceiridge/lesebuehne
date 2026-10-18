@@ -1,5 +1,5 @@
-import { useComputed, useSignalEffect } from '@preact/signals';
-import { useEffect } from 'preact/hooks';
+import { useComputed, useSignal, useSignalEffect } from '@preact/signals';
+import { useEffect, useRef } from 'preact/hooks';
 import type { ReaderSession } from '../../app/session.ts';
 import { route, settings, toast } from '../../app/store.ts';
 import { t, type MessageKey } from '../../i18n/i18n.ts';
@@ -7,19 +7,21 @@ import { focusKind, mapKey, type Action } from '../../input/keymap.ts';
 import { nextParagraph, nextSection, nextSentence, prevParagraph, prevSection, prevSentence } from '../../nav/navigation.ts';
 import { TEMPO_STEP } from '../../engine/engine.ts';
 import type { Settings } from '../../settings/settings.ts';
-import { IconBack, IconBookmark, IconCinema, IconFocus, IconHelp, IconPage, IconRsvp, IconSentence, IconSettings, IconStage, IconSubtitles, IconToc } from '../icons.tsx';
+import { IconBack, IconBookmark, IconCinema, IconFocus, IconHelp, IconPage, IconRsvp, IconSentence, IconSettings, IconStage, IconSubtitles, IconToc, IconZen } from '../icons.tsx';
 import { AiIndicator } from './AiIndicator.tsx';
 import { Controls, setTempo, setWpm, WPM_STEP } from './Controls.tsx';
 import { Notices } from './Notices.tsx';
 import { BookmarksPanel, FootnotePopover, HelpPanel, TocPanel } from './Panels.tsx';
 import { SettingsPanel } from './SettingsPanel.tsx';
 import { StagePanel } from './StagePanel.tsx';
-import { RsvpView, SentenceView } from './Subtitles.tsx';
+import { RsvpView, SentenceView, StageSentence } from './Subtitles.tsx';
 import { TextPane } from './TextPane.tsx';
+import { browserFullscreen } from './fullscreen.ts';
 
 const LAYOUTS: Array<{ id: Settings['layout']; icon: typeof IconStage; label: MessageKey }> = [
   { id: 'stage', icon: IconStage, label: 'reader.layout.stage' },
   { id: 'cinema', icon: IconCinema, label: 'reader.layout.cinema' },
+  { id: 'overlay', icon: IconStage, label: 'reader.layout.overlay' },
   { id: 'sentence', icon: IconSentence, label: 'reader.layout.sentence' },
   { id: 'rsvp', icon: IconRsvp, label: 'reader.layout.rsvp' },
   { id: 'page', icon: IconPage, label: 'reader.layout.page' },
@@ -75,6 +77,7 @@ export function dispatch(session: ReaderSession, action: Action): boolean {
       return true;
     }
     case 'toggle-subtitles':
+      if (settings.value.layout === 'overlay') return false;
       settings.value = { ...settings.value, subtitles: !settings.value.subtitles };
       toast(settings.value.subtitles ? t('reader.subtitlesOn') : t('reader.subtitlesOff'), 'info', 1800);
       return true;
@@ -114,9 +117,48 @@ export function dispatch(session: ReaderSession, action: Action): boolean {
 /** The reader (B7–B9): top bar, stage, text, controls, panels. */
 export function Reader({ session }: { session: ReaderSession }) {
   const layout = settings.value.layout;
+  const zen = useSignal(false);
+  const chrome = useSignal<'top' | 'bottom' | 'both' | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  const zenButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    let fullscreen = browserFullscreen();
+    if (fullscreen) zen.value = true;
+    const sync = () => {
+      const next = browserFullscreen();
+      if (next === fullscreen) return;
+      fullscreen = next;
+      zen.value = next;
+      chrome.value = null;
+      if (next) root.current?.focus({ preventScroll: true });
+    };
+    const syncApi = () => {
+      fullscreen = browserFullscreen();
+      zen.value = fullscreen;
+      chrome.value = null;
+      if (fullscreen) root.current?.focus({ preventScroll: true });
+    };
+    const mode = window.matchMedia('(display-mode: fullscreen)');
+    window.addEventListener('resize', sync);
+    document.addEventListener('fullscreenchange', syncApi);
+    mode.addEventListener('change', syncApi);
+    return () => {
+      window.removeEventListener('resize', sync);
+      document.removeEventListener('fullscreenchange', syncApi);
+      mode.removeEventListener('change', syncApi);
+    };
+  }, [session]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape' && zen.peek() && !session.panel.peek() && !session.popover.peek()) {
+        zen.value = false;
+        chrome.value = null;
+        zenButton.current?.focus({ preventScroll: true });
+        e.preventDefault();
+        return;
+      }
       const action = mapKey(e, {
         focus: focusKind(document.activeElement),
         modalOpen: session.panel.value !== null || session.popover.value !== null,
@@ -161,7 +203,18 @@ export function Reader({ session }: { session: ReaderSession }) {
   const panel = session.panel.value;
 
   return (
-    <div class="reader" data-layout={layout}>
+    <div ref={root} class={zen.value ? 'reader is-zen' : 'reader'} data-layout={layout} data-zen-chrome={chrome.value ?? 'hidden'} tabIndex={-1}
+      onPointerMove={(e) => {
+        if (!zen.peek() || e.pointerType === 'touch') return;
+        const bounds = e.currentTarget.getBoundingClientRect();
+        const target = e.target as Element;
+        chrome.value = e.clientY - bounds.top < 36 || target.closest('.topbar') ? 'top'
+          : bounds.bottom - e.clientY < 36 || target.closest('.controls') ? 'bottom' : null;
+      }}
+      onPointerLeave={() => { chrome.value = null; }}
+      onPointerDown={(e) => {
+        if (zen.peek() && e.pointerType === 'touch' && (e.target as Element).closest('.reader-main')) chrome.value = chrome.peek() ? null : 'both';
+      }}>
       <header class="topbar">
         <button
           type="button"
@@ -181,6 +234,12 @@ export function Reader({ session }: { session: ReaderSession }) {
         </div>
         <AiIndicator session={session} />
         <div class="topbar-actions">
+          <button ref={zenButton} type="button" class="icon-btn zen-toggle" aria-label={t(zen.value ? 'reader.zenExit' : 'reader.zen')} aria-pressed={zen.value}
+            title={t('reader.zenHint')} onClick={() => {
+              zen.value = !zen.peek();
+              chrome.value = null;
+              root.current?.focus({ preventScroll: true });
+            }}><IconZen /></button>
           <select class="layout-picker hide-narrow" aria-label={t('reader.layout')} value={layout} onChange={(e) => (settings.value = { ...settings.value, layout: e.currentTarget.value as Settings['layout'] })}>
             {LAYOUTS.map(({ id, label }) => <option key={id} value={id}>{t(label)}</option>)}
           </select>
@@ -214,8 +273,9 @@ export function Reader({ session }: { session: ReaderSession }) {
       <Notices session={session} />
 
       <main class="reader-main">
-        {layout === 'stage' || layout === 'cinema' ? <StagePanel session={session} subtitles={layout === 'cinema' || settings.value.subtitles} /> : null}
+        {session.stageVisible ? <StagePanel session={session} subtitles={layout !== 'overlay' && (layout === 'cinema' || settings.value.subtitles)} /> : null}
         {layout === 'sentence' ? <SentenceView session={session} /> : null}
+        {layout === 'overlay' ? <StageSentence session={session} /> : null}
         {layout === 'rsvp' ? <RsvpView session={session} variant="view" /> : null}
         {layout === 'stage' || layout === 'page' || layout === 'focus' ? <TextPane session={session} /> : null}
       </main>

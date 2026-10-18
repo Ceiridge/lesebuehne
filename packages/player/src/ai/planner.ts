@@ -1,5 +1,5 @@
 import { JobQueue, type AnimationProgram, type Book, type Section, type StyleBible, type VisualPlan } from '@lesebuehne/core';
-import { budgetAfter, DEFAULT_BUDGET, preferBudget, type PlanBudget, type PlanResponse, type VisualPreference } from '@lesebuehne/director';
+import { budgetAfter, DEFAULT_BUDGET, preferBudget, type ImageOptions, type PlanBudget, type PlanResponse, type VisualPreference } from '@lesebuehne/director';
 import type { AiBackend } from './backends.ts';
 import { aiStatus } from './state.ts';
 import type { GenerationState } from './progress.ts';
@@ -42,6 +42,7 @@ export interface PlannerHost {
   now(): number;
   /** Visual preference for new plans (spec 007 B2). */
   prefer?(): VisualPreference | undefined;
+  imageOptions?(): ImageOptions;
   generation?(sectionId: string, state: GenerationState): void;
 }
 
@@ -55,7 +56,8 @@ export class AiPlanner {
   /** Estimated reading seconds prepared per wall second, including plans and their media. */
   readonly generationSpeed = signal<number | undefined>(undefined);
   private readonly throughput = new GenerationThroughput();
-  private readonly queue = new JobQueue(2);
+  private readonly planQueue = new JobQueue(2);
+  private readonly imageQueue = new JobQueue(4);
   private readonly info = new Map<string, PlanInfo>();
   private readonly failedAt = new Map<string, number>();
   private style?: Promise<StyleBible | undefined>;
@@ -75,12 +77,12 @@ export class AiPlanner {
     this.host.generation?.(sectionId, state);
   }
 
-  private job<T extends { cached?: boolean }>(sectionId: string, key: string, priority: number, run: (signal: AbortSignal) => Promise<T>, accept: (value: T) => void | boolean, measurement: StageMeasurement = { uncached: false, known: true }): Promise<void> {
+  private job<T extends { cached?: boolean }>(sectionId: string, key: string, priority: number, run: (signal: AbortSignal) => Promise<T>, accept: (value: T) => void | boolean, measurement: StageMeasurement = { uncached: false, known: true }, queue = this.planQueue): Promise<void> {
     if (!this.active || this.disposed) return Promise.resolve();
     const revision = {};
     this.revisions.set(sectionId, revision);
     this.generation(sectionId, 'queued');
-    return this.track(this.queue.enqueue({ key, priority, run: async (signal) => {
+    return this.track(queue.enqueue({ key, priority, run: async (signal) => {
       this.generation(sectionId, 'working');
       measurement.start ??= this.host.now();
       const result = await run(signal);
@@ -118,6 +120,11 @@ export class AiPlanner {
     return this.info.get(sectionId);
   }
 
+  /** Apply live without cancelling requests or discarding finished media. */
+  setImageConcurrency(value: number): void {
+    this.imageQueue.setConcurrency(Math.min(4, Math.max(1, value)));
+  }
+
   /** Stop hidden-stage work, retaining finished plans/media for the next visible view. */
   setActive(active: boolean): void {
     if (this.disposed || this.active === active) return;
@@ -126,7 +133,8 @@ export class AiPlanner {
     this.lastSection = undefined;
     if (active) return;
     this.revisions.clear();
-    this.queue.retain(new Set());
+    this.planQueue.retain(new Set());
+    this.imageQueue.retain(new Set());
     this.style = undefined;
     for (const [id, state] of this.generationStates) {
       if (state === 'queued' || state === 'working') this.generation(id, 'idle');
@@ -160,7 +168,7 @@ export class AiPlanner {
     if (this.preparedStyle) return Promise.resolve(this.preparedStyle);
     if (this.style) return this.style;
     const pending = this.track(
-      this.queue.enqueue({ key: 'style', priority: -1, run: async (signal) => {
+      this.planQueue.enqueue({ key: 'style', priority: -1, run: async (signal) => {
         const result = await this.backend.prepare(this.host.book, {}, signal);
         signal.throwIfAborted();
         return result;
@@ -258,7 +266,7 @@ export class AiPlanner {
     const image = this.backend.image?.bind(this.backend);
     if (!image) { this.generation(sectionId, 'error'); return Promise.resolve(); }
     const key = `img:${sectionId}${opts.regenerate ? ':r' : ''}`;
-    return this.job(sectionId, key, priority, (signal) => image(this.host.book, sectionId, plan, opts, signal), (r) => this.host.applyImage(sectionId, r), measurement);
+    return this.job(sectionId, key, priority, (signal) => image(this.host.book, sectionId, plan, { ...this.host.imageOptions?.(), ...opts }, signal), (r) => this.host.applyImage(sectionId, r), measurement, this.imageQueue);
   }
 
   private readonly repaired = new Set<string>();
@@ -304,7 +312,12 @@ export class AiPlanner {
       ...wanted.flatMap((w) => [`plan:${w.id}`, `anim:${w.id}`, `anim:${w.id}:r`, `img:${w.id}`, `img:${w.id}:r`]),
       ...[...this.info.keys()].flatMap((id) => [`regen:${id}`, `select:${id}`]),
     ]);
-    this.queue.retain(keys);
+    this.planQueue.retain(keys);
+    this.imageQueue.retain(keys);
+    for (const w of wanted) {
+      this.imageQueue.prioritize(`img:${w.id}`, w.priority);
+      this.planQueue.prioritize(`plan:${w.id}`, w.priority);
+    }
     void this.ensureStyle();
     for (const w of wanted) {
       const failed = this.failedAt.get(w.id);
@@ -336,7 +349,7 @@ export class AiPlanner {
   async regenerateStyle(): Promise<void> {
     if (!this.active || this.disposed) return;
     try {
-      const r = await this.track(this.queue.enqueue({ key: 'style-regen', priority: -3, run: async (signal) => {
+      const r = await this.track(this.planQueue.enqueue({ key: 'style-regen', priority: -3, run: async (signal) => {
         const result = await this.backend.prepare(this.host.book, { regenerate: true }, signal);
         signal.throwIfAborted();
         return result;
@@ -361,6 +374,7 @@ export class AiPlanner {
 
   dispose(): void {
     this.disposed = true;
-    this.queue.retain(new Set());
+    this.planQueue.retain(new Set());
+    this.imageQueue.retain(new Set());
   }
 }

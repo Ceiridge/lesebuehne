@@ -308,6 +308,28 @@ describe('M5: images', () => {
     const r3 = (await (await call(api, 'POST', '/api/images', { bookId: book.id, sectionId, plan, regenerate: true })).json()) as R;
     expect(r3).toMatchObject({ variants: 2, selected: 1 });
     expect(requests[1]!.styleRef?.byteLength).toBe(PNG.byteLength); // the first image is the style reference
+    const fastBody = { bookId: book.id, sectionId, plan, quality: 'low', styleReference: false };
+    const fast = await (await call(api, 'POST', '/api/images', fastBody)).json() as R;
+    expect(fast).toMatchObject({ cached: false, variants: 1 });
+    expect(fast.url).not.toBe(r3.url);
+    expect(requests.at(-1)).toMatchObject({ quality: 'low' });
+    expect(requests.at(-1)!.styleRef).toBeUndefined();
+    expect(await (await call(api, 'POST', '/api/images', fastBody)).json()).toMatchObject({ cached: true, url: fast.url });
+    expect(await (await call(api, 'POST', '/api/images', { bookId: book.id, sectionId, plan })).json()).toMatchObject({ cached: true, url: r3.url });
+    expect((await call(api, 'POST', '/api/images', { ...fastBody, quality: 'invalid' })).status).toBe(400);
+    const compactBody = { ...fastBody, resolution: 'compact' };
+    const compact = await (await call(api, 'POST', '/api/images', compactBody)).json() as R;
+    expect(compact.cached).toBe(false);
+    expect(compact.url).not.toBe(fast.url);
+    expect(requests.at(-1)!.size).toBe('1024x688');
+    expect(await (await call(api, 'POST', '/api/images', compactBody)).json()).toMatchObject({ cached: true, url: compact.url });
+    expect(await (await call(api, 'POST', '/api/images', fastBody)).json()).toMatchObject({ cached: true, url: fast.url });
+    await call(api, 'POST', '/api/images', { ...compactBody, plan: { ...plan, image: { ...plan.image, aspect: '1:1' } } });
+    expect(requests.at(-1)!.size).toBe('832x832');
+    await call(api, 'POST', '/api/images', { ...fastBody, resolution: 'square' });
+    expect(requests.at(-1)!.size).toBe('1024x1024');
+    expect((await call(api, 'POST', '/api/images', { ...fastBody, resolution: 'invalid' })).status).toBe(400);
+    expect((await call(api, 'POST', '/api/images', { ...fastBody, panels: ['only one'] })).status).toBe(400);
     const file = await call(api, 'GET', `/${r3.url}`);
     expect(file.headers.get('content-type')).toBe('image/png');
     expect((await file.arrayBuffer()).byteLength).toBe(PNG.byteLength);

@@ -1,8 +1,9 @@
 import { VisualPlanSchema, type Book, type ProviderRegistry, type ResultCache, type StyleBible, type VisualPlan } from '@lesebuehne/core';
-import { ImageDirector } from '@lesebuehne/director';
+import { ImageDirector, type ImageOptions } from '@lesebuehne/director';
 import { join } from 'node:path';
 import * as z from 'zod';
 import { DiskStore } from './disk-store.ts';
+import { splitImageGrid } from './image-grid.ts';
 
 export { imagePrompt } from '@lesebuehne/director';
 
@@ -12,6 +13,7 @@ export interface ImageResponse {
   cached: boolean;
   variants: number;
   selected: number;
+  tiles?: Array<{ url: string }>;
 }
 
 const FILE = /^[a-z0-9-]{1,90}\.(png|jpg|webp)$/u;
@@ -23,6 +25,10 @@ const ImageBody = z.object({
   plan: VisualPlanSchema,
   regenerate: z.boolean().optional(),
   select: z.number().int().min(0).optional(),
+  quality: z.enum(['low', 'medium', 'high']).optional(),
+  resolution: z.enum(['standard', 'compact', 'square']).optional(),
+  styleReference: z.boolean().optional(),
+  panels: z.array(z.string().min(1).max(2000)).length(4).optional(),
 });
 
 /** Images for `image` plans (spec 005 B2): the shared image director with files on disk. */
@@ -41,12 +47,13 @@ export class ImageService {
     },
   ) {
     const { dir: _dir, ...rest } = o;
-    this.director = new ImageDirector({ ...rest, store: new DiskStore(o.dir) });
+    this.director = new ImageDirector({ ...rest, store: new DiskStore(o.dir), splitGrid: splitImageGrid });
   }
 
-  async generate(book: Book, sectionId: string, plan: VisualPlan, opts: { regenerate?: boolean; select?: number }, signal: AbortSignal): Promise<ImageResponse> {
+  async generate(book: Book, sectionId: string, plan: VisualPlan, opts: ImageOptions, signal: AbortSignal): Promise<ImageResponse> {
     const r = await this.director.generate(book, sectionId, plan, opts, signal);
-    return { url: `api/images/${r.file}`, providerId: r.providerId, cached: r.cached, variants: r.variants, selected: r.selected };
+    return { url: `api/images/${r.file}`, providerId: r.providerId, cached: r.cached, variants: r.variants, selected: r.selected,
+      ...(r.tiles ? { tiles: r.tiles.map(tile => ({ url: `api/images/${tile.file}` })) } : {}) };
   }
 
   /** `POST /api/images`. */
@@ -56,8 +63,13 @@ export class ImageService {
     const book = await getBook(body.data.bookId);
     if (!book) return Response.json({ error: 'unknown-book' }, { status: 404 });
     try {
-      const { regenerate, select } = body.data;
-      return Response.json(await this.generate(book, body.data.sectionId, body.data.plan, { ...(regenerate ? { regenerate } : {}), ...(select !== undefined ? { select } : {}) }, req.signal));
+      const { regenerate, select, quality, resolution, styleReference, panels } = body.data;
+      return Response.json(await this.generate(book, body.data.sectionId, body.data.plan, {
+        ...(regenerate ? { regenerate } : {}), ...(select !== undefined ? { select } : {}),
+        ...(quality ? { quality } : {}), ...(styleReference !== undefined ? { styleReference } : {}),
+        ...(resolution ? { resolution } : {}),
+        ...(panels ? { panels } : {}),
+      }, req.signal));
     } catch (e) {
       if (req.signal.aborted) return Response.json({ error: 'aborted' }, { status: 499 });
       return Response.json({ error: 'unavailable', message: e instanceof Error ? e.message : String(e) }, { status: 503 });

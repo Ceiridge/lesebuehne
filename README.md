@@ -96,13 +96,83 @@ The subtitle setting also offers **Single word (RSVP)** for the stage and cinema
 RSVP preserves signs, currency symbols and standalone operators.
 Silent RSVP does not generate speech or show a speech-based remaining-time estimate.
 
-Under **Set up the stage**, choose mixed visuals, images only, or animations only.
+Use the stage selector in the header or **Set up the stage** to choose mixed visuals, images only, or animations/diagrams.
 This choice applies to new AI plans. Diagrams and text visuals remain available.
 Stage generation pauses in layouts without a stage. When you return, finished visuals remain available.
+
+### Text over the stage
+
+Choose **Text over the stage** for only the current sentence over a full-width stage.
+The sentence uses your configured reading font size. Other sentences and margin tracks are hidden.
+The image blurs only behind the sentence. Light letters use a dark outline and a short, sharp shadow.
+Word highlighting uses color and a thin underline. Long sentences can scroll inside their text box.
+Under **Set up the stage**, turn off **Gently zoom and pan images** to keep images still.
+This applies immediately and does not change the motion setting for other animations.
+
+The **Zen mode** button expands the reading area to fill the window and hides the header and footer.
+Move the pointer near the top or bottom edge to reveal controls without resizing the stage.
+On touch devices, tap the reading area to show or hide controls. Press <kbd>Esc</kbd> or use the Zen button to exit.
+Entering browser fullscreen also starts Zen; leaving fullscreen exits it.
+The Fullscreen API and fullscreen display mode provide events. F11 uses a desktop screen/window-size fallback because browsers do not expose a standard F11 event.
+
+Set **Subtitle font size** under **Set up the stage** to adjust line or single-word subtitles from 14 to 48 px.
+The sentence-over-stage view keeps the normal reading font size.
+
+### Image generation speed
+
+Under **Set up the stage → Generate images**, choose **Fast**, **Balanced**, **High quality**, or the provider default.
+Fast requests lower detail, which can reduce generation time. Image-use, Codex and compatible OpenAI image models receive this quality request.
+ChatGPT/Codex may override it. OpenRouter quality depends on the selected model.
+
+The **Image resolution** setting also offers **Compact** and **Square**.
+Compact requests 1024×688 landscape images or 832×832 square images. Landscape images use about 55% fewer pixels than the standard 1536×1024 request.
+Compact needs a model with custom dimensions. For models with fixed sizes, choose Square (1024×1024).
+Codex may override requested sizes. The OpenRouter chat adapter requests its model-dependent 1K tier for smaller sizes.
+Smaller requests can reduce generation time; these options do not resize a finished image.
+
+Turn off **Send the first book image as a style reference** to skip reference-image uploads.
+The illustration style text still applies. Reference support depends on the provider.
+These settings apply to new requests. Finished images remain available; press <kbd>R</kbd> to regenerate the current image.
+The cache keeps separate results for each quality, resolution and reference setting.
+
+### Image intervals and 2×2 batches
+
+Under **Set up the stage → Generate images**, choose an image per section, paragraph, sentence, or estimated reading-time interval.
+Timed intervals use the book's estimated 1× timeline and change at sentence boundaries.
+These choices switch to **Images only**. Fixed image sequences use the book passage directly as the scene prompt, without per-section text-model planning or chapter image budgets.
+**Automatic** keeps the existing AI-selected visuals and budgets. Switching to mixed visuals or animations pauses the configured image sequence.
+
+**Generate four scenes together (2×2)** sends four successive scenes in one image request.
+The server crops the returned image into four PNG files using its actual dimensions. Browser-only providers use canvas cropping.
+Tiles are cached and displayed separately in reading order. Future tiles do not appear early; the last ready image stays visible while the next one is pending.
+Sentence images start on opening the book. Normal playback keeps unfinished requests and queues new sentences ahead.
+Passed sentences remain queued for completion after the current lookahead. An explicit seek cancels obsolete requests after a 1.5-second dwell.
+Failed requests retry after two minutes, including while playback is paused.
+The last batch of a chapter repeats unused prompts to fill the grid. Only the required tiles enter the reading sequence.
+
+Each tile has half the sheet's width and height. At standard landscape resolution, that is 768×512 per tile.
+Batching reduces request count, not necessarily total latency by a factor of four. Scene separation depends on the image model following the grid prompt.
+Press <kbd>R</kbd> to regenerate the current batch. Changing interval or batch settings starts a new sequence; matching cached results remain reusable.
+
+### Generation concurrency
+
+- Speech and stage jobs use independent queues. Stage work does not reserve TTS slots.
+- Automatic stage planning uses two slots for style, plans and animation code. Images use a separate queue with four slots by default.
+- **Parallel image requests** under **Set up the stage → Generate images** adjusts the image queue from one to four slots. The setting also applies to fixed image sequences. If you reduce the limit, running requests finish. Finished images stay available.
+- Fixed image sequences skip per-scene LLM planning. They prepare up to five estimated reading minutes. The queue holds at most 24 batches ahead plus the preceding batch.
+- Each image provider allows four active requests: image-use, Codex images, OpenAI-compatible images and OpenRouter images. Provider limits apply across all reader sessions.
+- Four concurrent 2×2 batches cover up to 16 scenes at once.
+- The local QwenTTS configuration uses four parallel requests. Its server must also allow a batch of four.
+- A provider chain is a fallback order, not a worker pool: image-use and Codex do not produce the same request in parallel.
+
+Concurrency tests hold four image requests open while planning and four TTS requests continue.
+A provider test checks that four image-use jobs get separate output folders. A fifth job waits for a free slot.
+These tests use mocked providers. They do not measure real image-service latency.
 
 ### Generation progress
 
 The timeline and text margins show separate stage and speech tracks.
+Image sequences keep one stage segment per sentence. Each segment shows its own status, including images that finish out of order.
 Stage colors identify pictures, animations, diagrams, quotes, key terms and book figures.
 The legend names the visible types. Filled sections are ready. Dashed sections are working. Faint sections are queued.
 

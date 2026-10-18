@@ -72,6 +72,11 @@ describe('M5: image and placeholder views', () => {
     if (s.mode !== 'image') return;
     expect(s.camera.scale).toBeGreaterThan(1);
     expect(s.camera.scale).toBeLessThanOrEqual(1.04);
+    const still = visualState(plan, [1, 10], 15, 'full', { image: { url: 'api/images/x.png', animate: false } });
+    expect(still.mode).toBe('image');
+    if (still.mode !== 'image') return;
+    expect(still.camera).toEqual({ x: 0.5, y: 0.5, scale: 1 });
+    expect(still.fallback).toEqual(s.fallback);
     render(<Visual state={s} />, root);
     const img = root.querySelector('.lb-image-picture')!;
     expect(img.getAttribute('src')).toBe('api/images/x.png');

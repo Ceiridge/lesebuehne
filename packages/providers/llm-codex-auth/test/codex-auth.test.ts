@@ -170,6 +170,11 @@ describe('M5: codex-image', () => {
     expect(bodies[0]!.tool_choice).toBe('required');
     expect(bodies[0]!.input[0].content[0].type).toBe('input_image');
     expect(bodies[0]!.store).toBe(false);
+    await img.generate({ prompt: 'a castle', size: '1024x688', quality: 'low', signal: new AbortController().signal });
+    expect(bodies[1]!.tools[0].quality).toBe('low');
+    expect(bodies[1]!.tools[0].size).toBe('1024x688');
+    expect(bodies[1]!.input[0].content).toHaveLength(1);
+    expect(bodies[1]!.input[0].content[0].type).toBe('input_text');
     const failing = new CodexImageProvider(auth, {
       model: 'x',
       fetch: async () => new Response(`data: ${JSON.stringify({ type: 'response.failed', response: { error: { message: 'usage limit reached' } } })}\n\n`),

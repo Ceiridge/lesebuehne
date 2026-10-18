@@ -9,6 +9,7 @@ import { t, type MessageKey } from '../../i18n/i18n.ts';
 import { DURATIONS } from '../../theme/tokens.ts';
 import { DebugOverlay } from './DebugOverlay.tsx';
 import { Subtitles } from './Subtitles.tsx';
+import { scenePlan } from '../../ai/image-sequence.ts';
 
 export interface StageSnapshot {
   frame: StageFrame;
@@ -36,6 +37,14 @@ export function stageStep(session: ReaderSession, now: number): StageSnapshot {
   const motion = settings.value.motion;
   const glossary = session.glossary.value;
   const palette = animationPalette(session);
+  const sequence = session.imageSequence.value;
+  if (sequence && session.forcedMode(sectionId) === 'auto') {
+    const entryIndex = session.engine.position.value.entryIndex;
+    const ready = sequence.imageAt(entryIndex);
+    const scene = ready?.scene ?? sequence.scenes[sequence.sceneIndex(entryIndex)];
+    const current = scene ? visualState(scenePlan(scene), [], tau, motion, ready ? { image: { url: ready.image.url, animate: settings.value.imageMotion } } : {}) : null;
+    return { frame: { ...frame, current: wanted, previous: null, fade: 1 }, current, previous: null, tau };
+  }
   const state = (key: string | null): VisualState | null => {
     if (!key) return null;
     const v = session.visualFor(key);
@@ -45,7 +54,7 @@ export function stageStep(session: ReaderSession, now: number): StageSnapshot {
     const anim = v.plan.mode === 'animation' ? session.animations.value.get(sectionId) : undefined;
     if (anim && anim.status !== 'failed') options.animation = { key: anim.key, code: anim.program.code, sectionStart: session.sectionStart(sectionId), palette };
     const image = v.plan.mode === 'image' ? session.images.value.get(sectionId) : undefined;
-    if (image) options.image = { url: image.url };
+    if (image) options.image = { url: image.url, animate: settings.value.imageMotion };
     return visualState(v.plan, v.times, tau, motion, options);
   };
   return { frame, current: state(frame.current), previous: state(frame.previous), tau };
@@ -76,7 +85,7 @@ export function StagePanel({ session, subtitles = false }: { session: ReaderSess
     const loop = (): void => {
       const next = stageStep(session, session.env.timers.now());
       const previous = snapshot.peek();
-      const nextInputs = [session.plans.peek(), session.images.peek(), session.animations.peek(), session.styleBible.peek(), settings.peek(), session.env.prefersDark()];
+      const nextInputs = [session.plans.peek(), session.images.peek(), session.animations.peek(), session.styleBible.peek(), settings.peek(), session.env.prefersDark(), session.imageSequence.peek()?.frames.peek()];
       if (nextInputs.some((value, i) => value !== inputs[i]) || next.tau !== previous.tau || next.frame.current !== previous.frame.current || next.frame.previous !== previous.frame.previous || next.frame.fade !== previous.frame.fade) {
         snapshot.value = next;
         inputs = nextInputs;

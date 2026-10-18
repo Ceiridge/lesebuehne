@@ -36,11 +36,11 @@ export function GenerationPace({ session }: { session: ReaderSession }) {
 
 export function GenerationSegments({ ranges, start, end, vertical = false }: { ranges: readonly GenerationRange[]; start: number; end: number; vertical?: boolean }) {
   const duration = end - start || 1;
-  return <>{ranges.filter((r) => r.state !== 'idle' && r.end > start && r.start < end).map((r) => {
+  return <>{ranges.filter((r) => (r.state !== 'idle' || r.entryIndex !== undefined) && r.end > start && r.start < end).map((r) => {
     const offset = (Math.max(start, r.start) - start) / duration * 100;
     const size = (Math.min(end, r.end) - Math.max(start, r.start)) / duration * 100;
-    const title = `${r.stageKind ? `${t(`generation.kind.${r.stageKind}`)} · ` : ''}${t(`generation.${r.state}`)}`;
-    return <span key={`${r.sectionId}:${r.start}`} class={`generation-segment is-${r.state}${r.stageKind ? ` generation-kind-${r.stageKind}` : ''}`}
+    const title = `${r.entryIndex !== undefined ? `${t('generation.sentence', { number: r.entryIndex + 1 })} · ` : ''}${r.stageKind ? `${t(`generation.kind.${r.stageKind}`)} · ` : ''}${t(`generation.${r.state}`)}`;
+    return <span key={`${r.sectionId}:${r.start}`} data-entry-index={r.entryIndex} class={`generation-segment is-${r.state}${r.entryIndex !== undefined ? ' is-sentence' : ''}${vertical ? ' is-vertical' : ''}${r.stageKind ? ` generation-kind-${r.stageKind}` : ''}`}
       title={title} aria-label={title} style={vertical ? { top: `${offset}%`, height: `${size}%` } : { left: `${offset}%`, width: `${size}%` }} />;
   })}</>;
 }
@@ -77,11 +77,13 @@ export function GenerationProgress({ session }: { session: ReaderSession }) {
 
 export function SectionGeneration({ session, sectionId }: { session: ReaderSession; sectionId: string }) {
   const { stage, speech } = session.generation.value;
-  const range = stage.find((r) => r.sectionId === sectionId);
-  if (!range) return null;
+  const ranges = stage.filter((r) => r.sectionId === sectionId);
+  if (!ranges.length) return null;
+  const start = ranges[0]!.start;
+  const end = ranges.at(-1)!.end;
   return <span class="section-generation" aria-label={t('generation.margin')}>
     {(['stage', 'speech'] as const).map((kind) => <span key={kind} class={`generation-track generation-${kind}`} title={t(`generation.${kind}`)}>
-      <GenerationSegments ranges={(kind === 'stage' ? stage : speech).filter((r) => r.sectionId === sectionId)} start={range.start} end={range.end} vertical />
+      <GenerationSegments ranges={kind === 'stage' ? ranges : speech.filter((r) => r.sectionId === sectionId)} start={start} end={end} vertical />
     </span>)}
   </span>;
 }

@@ -6,6 +6,8 @@ export type FontId = (typeof FONT_IDS)[number];
 
 export const LIMITS = {
   fontSize: { min: 14, max: 32, step: 1 },
+  subtitleFontSize: { min: 14, max: 48, step: 1 },
+  imageConcurrency: { min: 1, max: 4, step: 1 },
   lineHeight: { min: 1.2, max: 2.2, step: 0.05 },
   measure: { min: 45, max: 90, step: 1 },
   margins: { min: 0, max: 96, step: 4 },
@@ -41,11 +43,20 @@ export function settingsSchema(reducedMotion: boolean) {
     voiceByLang: z.record(z.string(), z.string()).catch({}),
     footnoteMode: z.enum(['skip', 'inline', 'section-end']).catch('skip'),
     uiLanguage: z.enum(['auto', 'de', 'en']).catch('auto'),
-    layout: z.enum(['stage', 'cinema', 'sentence', 'rsvp', 'page', 'focus']).catch('stage'),
+    layout: z.enum(['stage', 'cinema', 'overlay', 'sentence', 'rsvp', 'page', 'focus']).catch('stage'),
+    imageQuality: z.enum(['auto', 'low', 'medium', 'high']).catch('auto'),
+    imageResolution: z.enum(['standard', 'compact', 'square']).catch('standard'),
+    imageStyleReference: z.boolean().catch(true),
+    imageMotion: z.boolean().catch(true),
     /** Subtitles at the bottom of the stage in the stage layout (always on in "cinema"). */
     subtitles: z.boolean().catch(false),
     /** Subtitles as the karaoke line or as one RSVP word (spec 007 B1). */
     subtitleStyle: z.enum(['line', 'word']).catch('line'),
+    subtitleFontSize: num(14, 48, 25),
+    imageInterval: z.enum(['auto', 'section', 'paragraph', 'sentence', 'timed']).catch('auto'),
+    imageIntervalSeconds: num(5, 120, 30),
+    imageGrid: z.boolean().catch(false),
+    imageConcurrency: z.number().int().min(1).max(4).catch(4),
     /** RSVP pace without a voice (words per minute). */
     rsvpWpm: z.number().int().min(150).max(900).refine((n) => n % 25 === 0).catch(350),
     /** RSVP layout: advance at rsvpWpm even when a voice is available. */

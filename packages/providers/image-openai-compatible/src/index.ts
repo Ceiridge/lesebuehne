@@ -24,7 +24,7 @@ export class OpenAICompatibleImages implements ImageProvider {
   readonly label: string;
   readonly runsIn: readonly RunsIn[];
   readonly capabilities = { styleReference: false };
-  readonly limits = { concurrency: 2 };
+  readonly limits = { concurrency: 4 };
   readonly costHint: 'metered' | 'free';
   private readonly fetchImpl: FetchLike;
 
@@ -42,11 +42,11 @@ export class OpenAICompatibleImages implements ImageProvider {
     return { ok: true };
   }
 
-  async generate(req: { prompt: string; size: string; signal: AbortSignal }): Promise<{ image: Uint8Array; mime: string; model?: string }> {
+  async generate(req: Parameters<ImageProvider['generate']>[0]): Promise<{ image: Uint8Array; mime: string; model?: string }> {
     const res = await request(this.id, this.fetchImpl, `${this.config.baseURL.replace(/\/+$/u, '')}/images/generations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}) },
-      body: JSON.stringify({ ...(this.config.model ? { model: this.config.model } : {}), prompt: req.prompt, size: req.size, n: 1, ...this.config.body }),
+      body: JSON.stringify({ ...(this.config.model ? { model: this.config.model } : {}), prompt: req.prompt, n: 1, ...this.config.body, size: req.size, ...(req.quality ? { quality: req.quality } : {}) }),
       timeoutMs: this.config.timeoutMs ?? 300_000,
       signal: req.signal,
     });
@@ -99,7 +99,7 @@ export class OpenRouterImages implements ImageProvider {
   readonly label = 'OpenRouter images';
   readonly runsIn: readonly RunsIn[];
   readonly capabilities = { styleReference: true };
-  readonly limits = { concurrency: 2 };
+  readonly limits = { concurrency: 4 };
   readonly costHint = 'metered' as const;
   private readonly fetchImpl: FetchLike;
 
@@ -125,7 +125,7 @@ export class OpenRouterImages implements ImageProvider {
       body: JSON.stringify({
         model: this.config.model,
         modalities: ['image', 'text'],
-        image_config: { aspect_ratio: aspect },
+        image_config: { aspect_ratio: aspect, ...(w && h && Math.max(w, h) <= 1024 ? { image_size: '1K' } : {}) },
         messages: [
           {
             role: 'user',

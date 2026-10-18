@@ -54,7 +54,7 @@ export function cleanPrompt(prompt: string): string {
 }
 
 /** The full argument vector (exported for tests). */
-export function imageUseArgs(o: { python: string[]; script: string; prompt: string; size: string; out: string; styleRef?: string; timeoutSeconds: number }): string[] {
+export function imageUseArgs(o: { python: string[]; script: string; prompt: string; size: string; out: string; quality?: Parameters<ImageProvider['generate']>[0]['quality']; styleRef?: string; timeoutSeconds: number }): string[] {
   return [
     ...o.python,
     o.script,
@@ -69,6 +69,7 @@ export function imageUseArgs(o: { python: string[]; script: string; prompt: stri
     String(o.timeoutSeconds),
     '-o',
     o.out,
+    ...(o.quality ? ['--quality', o.quality] : []),
     ...(o.styleRef ? ['--style-ref', o.styleRef] : []),
     '--',
     cleanPrompt(o.prompt),
@@ -87,7 +88,7 @@ export class ImageUseProvider implements ImageProvider {
   readonly label = 'image-use (ChatGPT subscription)';
   readonly runsIn = ['server'] as const;
   readonly capabilities = { styleReference: true };
-  readonly limits = { concurrency: 1 };
+  readonly limits = { concurrency: 4 };
   readonly costHint = 'subscription' as const;
   private readonly dir: string;
   private readonly python: string[];
@@ -113,7 +114,7 @@ export class ImageUseProvider implements ImageProvider {
     return { ...Bun.env, IMAGE_USE_NO_UPDATE_CHECK: '1', IMAGE_USE_DISABLE_UPGRADE: '1', ...fromLauncher, ...this.config.env };
   }
 
-  async generate(req: { prompt: string; size: string; styleRef?: Uint8Array; signal: AbortSignal }): Promise<{ image: Uint8Array; mime: string }> {
+  async generate(req: Parameters<ImageProvider['generate']>[0]): Promise<{ image: Uint8Array; mime: string }> {
     if (!/^\d{3,4}x\d{3,4}$/u.test(req.size)) throw new ProviderError(this.id, 'bad-request', `invalid size ${req.size}`);
     const work = await mkdtemp(join(tmpdir(), 'lb-image-'));
     try {
@@ -131,7 +132,7 @@ export class ImageUseProvider implements ImageProvider {
       let r: { exitCode: number; stderr: string };
       try {
         r = await (this.config.spawn ?? realSpawn)(
-          imageUseArgs({ python: this.python, script: this.script, prompt: req.prompt, size: req.size, out, ...(styleRef ? { styleRef } : {}), timeoutSeconds: Math.round(timeoutMs / 1000) }),
+          imageUseArgs({ python: this.python, script: this.script, prompt: req.prompt, size: req.size, out, ...(req.quality ? { quality: req.quality } : {}), ...(styleRef ? { styleRef } : {}), timeoutSeconds: Math.round(timeoutMs / 1000) }),
           { env: await this.env(), cwd: work, signal: ctrl.signal },
         );
       } catch (e) {

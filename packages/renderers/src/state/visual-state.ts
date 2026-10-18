@@ -67,7 +67,7 @@ export interface VisualOptions {
   /** Glossary lookup (`glossaryIndex(styleBible)`) for colours and glyphs. */
   glossary?: ReadonlyMap<string, GlossaryConcept>;
   /** The section's generated image (image plans only). */
-  image?: { url: string };
+  image?: { url: string; animate?: boolean };
   /** The section's animation program (animation plans only). */
   animation?: { key: string; code: string; sectionStart: number; palette: AnimationInit['palette'] };
 }
@@ -104,7 +104,7 @@ export function visualState(plan: VisualPlan, cueTimes: readonly number[], t: nu
     const placeholder: VisualState = { mode: 'placeholder', overlay };
     if (!image || !plan.image) return placeholder;
     const focus = plan.cues.flatMap((c, k) => (c.action.type === 'focus' ? [{ time: cueTimes[k] ?? 0, regionId: c.action.regionId }] : []));
-    return { mode: 'image', url: image.url, camera: cameraAt(plan.image, focus, t, motion), fallback: placeholder };
+    return { mode: 'image', url: image.url, camera: cameraAt(plan.image, focus, t, image.animate === false ? 'none' : motion), fallback: placeholder };
   }
   if (plan.mode === 'animation' && animation) {
     const fallback = visualState(plan, cueTimes, t, motion, glossary ? { glossary } : {});

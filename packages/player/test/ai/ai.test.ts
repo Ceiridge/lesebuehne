@@ -96,6 +96,35 @@ function host(over: Partial<PlannerHost> = {}): PlannerHost & { applied: Array<[
 const settle = () => new Promise((r) => setTimeout(r, 40));
 
 describe('T6: AI planner', () => {
+  test('four pending images do not block further planning or style jobs; hiding aborts both queues', async () => {
+    const book = bundleOf('parallel.md', new TextEncoder().encode(Array.from({ length: 8 }, (_, i) => `# Chapter ${i}\n\nA boat sails.\n`).join('\n'))).book;
+    const order = book.chapters.flatMap(c => c.sections);
+    const h = host({ book, order, currentSectionId: () => order[0]!.id });
+    const backend = new FakeBackend() as AiBackend;
+    const imagePlan: VisualPlan = { ...kinetic('boat'), mode: 'image', image: { prompt: 'A boat', aspect: '3:2', focusRegions: [] } };
+    backend.plan = async () => ({ plan: imagePlan, cached: false, fallback: false, variants: 1, selected: 0 });
+    const requests: Array<{ signal: AbortSignal; finish(): void }> = [];
+    backend.image = async (_b, _id, _p, _o, signal) => {
+      await new Promise<void>(finish => requests.push({ signal, finish }));
+      return { url: '/boat.png', providerId: 'fake', variants: 1, selected: 0 };
+    };
+    const planner = new AiPlanner(h, backend);
+    try {
+      planner.schedule(order[0]!.id);
+      await settle();
+      expect(requests).toHaveLength(4);
+      expect(h.applied).toHaveLength(8);
+      await planner.regenerateStyle();
+      expect(requests).toHaveLength(4);
+      planner.setActive(false);
+      expect(requests.every(r => r.signal.aborted)).toBe(true);
+      requests.forEach(r => r.finish());
+      await settle();
+      expect(requests).toHaveLength(4);
+      expect(h.images).toHaveLength(0);
+    } finally { planner.dispose(); requests.forEach(r => r.finish()); }
+  });
+
   test('hidden layouts abort stage work, suppress new jobs and resume with existing plans and style', async () => {
     const before = settings.peek();
     settings.value = { ...before, layout: 'rsvp' };
@@ -511,18 +540,20 @@ describe('M5: images in the planner', () => {
       image: { prompt: 'A scholar in Königsberg at night', aspect: '16:9', focusRegions: [] },
     };
     backend.plan = async () => ({ plan: imagePlan, fallback: false, cached: false, variants: 1, selected: 0 });
-    const calls: Array<{ regenerate?: boolean }> = [];
+    const calls: Array<Parameters<NonNullable<AiBackend['image']>>[3]> = [];
     (backend as unknown as { image: AiBackend['image'] }).image = async (_b, sectionId, _p, opts) => {
       calls.push(opts);
       return { url: `http://127.0.0.1/api/images/${sectionId}-${calls.length}.png`, providerId: 'image-use', variants: calls.length, selected: calls.length - 1 };
     };
     let plan: VisualPlan | undefined;
-    const h = host({ planOf: () => plan, applyPlan: (_id: string, p: VisualPlan) => void (plan = p) });
+    let fast = false;
+    const h = host({ planOf: () => plan, applyPlan: (_id: string, p: VisualPlan) => void (plan = p), imageOptions: () => fast ? { quality: 'low', styleReference: false } : {} });
     const p = new AiPlanner(h, backend);
     p.schedule(order[0]!.id);
     await settle();
     expect(h.images[0]).toBe(`${order[0]!.id}=http://127.0.0.1/api/images/${order[0]!.id}-1.png`);
+    fast = true;
     await p.regenerate(order[0]!.id);
-    expect(calls.at(-1)).toEqual({ regenerate: true });
+    expect(calls.at(-1)).toEqual({ regenerate: true, quality: 'low', styleReference: false });
   });
 });
